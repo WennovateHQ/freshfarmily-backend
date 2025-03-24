@@ -299,17 +299,16 @@ const establishAssociations = () => {
     foreignKey: 'productId',
     as: 'OrderProduct'
   });
-  
+
   // OrderItem belongs to Farm
   OrderItem.belongsTo(Farm, {
-    foreignKey: 'farmId',
-    as: 'Farm'
+    foreignKey: 'farmId'
   });
   
   // Order has one Delivery
   Order.hasOne(Delivery, {
     foreignKey: 'orderId',
-    as: 'OrderDelivery'
+    as: 'DeliveryInfo'
   });
   
   logger.debug('Order associations established');

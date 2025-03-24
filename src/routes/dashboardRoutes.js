@@ -6,16 +6,48 @@
 
 const express = require('express');
 const router = express.Router();
+const { Farm } = require('../models/farm');
+const { Product } = require('../models/product');
+const { Order, OrderItem } = require('../models/order');
+const { User } = require('../models/user');
+const { Sequelize, Op } = require('sequelize');
+const { sequelize } = require('../config/database');
+const logger = require('../utils/logger');
+const analyticsService = require('../services/analyticsService');
 const { check, query, validationResult } = require('express-validator');
 const { authenticate, requireActiveUser, checkRole } = require('../middleware/auth');
-const analyticsService = require('../services/analyticsService');
-const { User, Order, OrderItem, Product, Farm, Profile, Sequelize } = require('../models');
-const sequelize = require('../config/database');
 const validator = require('validator');
-const { Op } = require('sequelize');
-const logger = require('../utils/logger');
-const { hasPermissions } = require('../utils/jwt');
 const dashboardLogger = require('../utils/logger');
+
+/**
+ * Helper function to get start date based on period
+ * @param {string} period - The period for which to calculate start date ('today', 'week', 'month', 'year', 'all')
+ * @param {Date} endDate - The reference end date (usually today)
+ * @returns {Date} - Calculated start date
+ */
+function getStartDateByPeriod(period, endDate = new Date()) {
+  const startDate = new Date(endDate);
+  
+  switch (period) {
+    case 'today':
+      startDate.setHours(0, 0, 0, 0);
+      break;
+    case 'week':
+      startDate.setDate(startDate.getDate() - 7);
+      break;
+    case 'month':
+      startDate.setMonth(startDate.getMonth() - 1);
+      break;
+    case 'year':
+      startDate.setFullYear(startDate.getFullYear() - 1);
+      break;
+    case 'all':
+      startDate = new Date(0); // Beginning of time
+      break;
+  }
+  
+  return startDate;
+}
 
 /**
  * @swagger
@@ -52,17 +84,8 @@ router.get('/admin', authenticate, async (req, res) => {
       return res.status(400).json({ success: false, errors: errors.array() });
     }
 
-    const isTestingMode = process.env.NODE_ENV === 'test' || process.env.TESTING === 'true';
-
-    // Check if testing mode is enabled
-    const logger = require('../utils/logger');
-    if (isTestingMode) {
-      logger.debug(`[TEST] Admin dashboard access attempt by user: ${JSON.stringify(req.user)}`);
-      logger.debug(`[TEST] Test mode is active, bypassing admin role check`);
-    }
-
-    // Only admin users can access this endpoint (unless in testing mode)
-    if (req.user.role !== 'admin' && !isTestingMode) {
+    // Only admin users can access this endpoint
+    if (req.user.role !== 'admin') {
       logger.warn(`Unauthorized access attempt to admin dashboard by ${req.user.email} (${req.user.role})`);
       return res.status(403).json({
         success: false,
@@ -70,42 +93,7 @@ router.get('/admin', authenticate, async (req, res) => {
       });
     }
 
-    if (isTestingMode) {
-      logger.info(`TESTING: Allowing access to admin dashboard for test user: ${req.user.userId}, Role: ${req.user.role}`);
-    } else {
-      logger.info(`Admin dashboard accessed by user: ${req.user.userId}`);
-    }
-
-    // For testing mode, provide mock data
-    if (isTestingMode) {
-      logger.debug(`[TEST] Returning mock admin dashboard data for testing`);
-      return res.status(200).json({
-        success: true,
-        data: {
-          orderStats: {
-            totalOrders: 0,
-            pendingOrders: 0,
-            completedOrders: 0,
-            cancelledOrders: 0,
-            totalRevenue: 0
-          },
-          userGrowth: {
-            total: 0,
-            new: 0,
-            active: 0,
-            inactive: 0
-          },
-          systemHealth: {
-            cpu: 25,
-            memory: 30,
-            disk: 40,
-            uptime: "1 day 2 hours"
-          },
-          recentActivity: [],
-          period: 'all'
-        }
-      });
-    }
+    logger.info(`Admin dashboard accessed by user: ${req.user.userId}`);
 
     // Calculate date range based on period
     const period = req.query.period || 'month';
@@ -137,7 +125,7 @@ router.get('/admin', authenticate, async (req, res) => {
     const userGrowth = await sequelize.query(`
       SELECT 
         DATE_TRUNC('month', "createdAt") as month,
-        COUNT(id) as new_users
+        COUNT("Users".id) as new_users
       FROM "Users"
       WHERE "createdAt" >= :startDate AND "createdAt" <= :endDate
       GROUP BY DATE_TRUNC('month', "createdAt")
@@ -157,22 +145,22 @@ router.get('/admin', authenticate, async (req, res) => {
 
     // Get recent system activity
     const recentActivity = await sequelize.query(`
-      (SELECT 'user_registered' as activity_type, "createdAt" as timestamp, id as reference_id
+      (SELECT 'user_registered' as activity_type, "Users"."createdAt" as timestamp, "Users".id as reference_id
        FROM "Users" 
-       WHERE "createdAt" >= :startDate 
-       ORDER BY "createdAt" DESC 
+       WHERE "Users"."createdAt" >= :startDate 
+       ORDER BY "Users"."createdAt" DESC 
        LIMIT 5)
       UNION ALL
-      (SELECT 'order_placed' as activity_type, "createdAt" as timestamp, id as reference_id
+      (SELECT 'order_placed' as activity_type, "Orders"."createdAt" as timestamp, "Orders".id as reference_id
        FROM "Orders" 
-       WHERE "createdAt" >= :startDate 
-       ORDER BY "createdAt" DESC 
+       WHERE "Orders"."createdAt" >= :startDate 
+       ORDER BY "Orders"."createdAt" DESC 
        LIMIT 5)
       UNION ALL
-      (SELECT 'farm_registered' as activity_type, "createdAt" as timestamp, id as reference_id
+      (SELECT 'farm_registered' as activity_type, "Farms"."createdAt" as timestamp, "Farms".id as reference_id
        FROM "Farms" 
-       WHERE "createdAt" >= :startDate 
-       ORDER BY "createdAt" DESC 
+       WHERE "Farms"."createdAt" >= :startDate 
+       ORDER BY "Farms"."createdAt" DESC 
        LIMIT 5)
       ORDER BY timestamp DESC
       LIMIT 10
@@ -203,20 +191,20 @@ router.get('/admin', authenticate, async (req, res) => {
 
 /**
  * @swagger
- * /api/dashboard/farmer/{farmId}:
+ * /api/dashboard/farmer/{userId}:
  *   get:
  *     summary: Get farmer dashboard data
- *     description: Retrieves statistics for a specific farm
+ *     description: Retrieves statistics for a specific farmer by userId
  *     tags: [Dashboard]
  *     security:
  *       - bearerAuth: []
  *     parameters:
  *       - in: path
- *         name: farmId
+ *         name: userId
  *         required: true
  *         schema:
  *           type: string
- *         description: ID of the farm
+ *         description: ID of the user/farmer
  *       - in: query
  *         name: period
  *         schema:
@@ -234,219 +222,178 @@ router.get('/admin', authenticate, async (req, res) => {
  *       500:
  *         description: Server error
  */
-router.get('/farmer/:farmId', authenticate, async (req, res) => {
-  const { farmId } = req.params;
-  const logger = dashboardLogger;
-  
+router.get('/farmer/:userId', authenticate, async (req, res) => {
   try {
-    // Check if testing mode is enabled
-    const isTestingMode = process.env.NODE_ENV === 'test' || process.env.TESTING === 'true';
-    
-    if (isTestingMode) {
-      logger.debug(`[TEST] Farmer dashboard access attempt for farm ${farmId} by user: ${JSON.stringify(req.user)}`);
-    }
-    
-    // Validate farmId
-    if (!farmId || (!isTestingMode && !validator.isUUID(farmId))) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid farm ID'
-      });
-    }
-    
-    // For test mode, create a mock farm if we're using a test farm ID
-    if (isTestingMode && farmId === 'test_farm_id') {
-      const farm = {
-        id: 'test_farm_id',
-        name: 'Test Farm',
-        farmerId: 'farmer_test_id',
-        status: 'active',
-        isVerified: true
-      };
-      
-      logger.debug(`[TEST] Using mock farm for farmer dashboard: ${JSON.stringify(farm)}`);
-      
-      // Return mock data for testing
-      return res.status(200).json({
-        success: true,
-        farmId,
-        farmName: farm.name,
-        data: {
-          orderStats: {
-            totalOrders: 0,
-            pendingOrders: 0,
-            completedOrders: 0,
-            cancelledOrders: 0,
-            totalRevenue: 0
-          },
-          productStats: {
-            totalProducts: 0,
-            topSellingProducts: []
-          },
-          inventoryHealth: {
-            lowStock: 0,
-            outOfStock: 0,
-            inStock: 0
-          },
-          customerMetrics: {
-            totalCustomers: 0,
-            repeatCustomers: 0,
-            newCustomers: 0
-          },
-          period: req.query.period || 'month'
-        }
-      });
+    // Input validation
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
     }
 
-    // Get farm
-    const farm = await Farm.findByPk(farmId, {
-      include: [
-        {
-          model: User,
-          as: 'Farmer',
-          attributes: ['id', 'firstName', 'lastName', 'email']
-        }
-      ]
-    });
-    
-    if (!farm) {
-      return res.status(404).json({
-        success: false,
-        error: 'Farm not found'
-      });
-    }
-    
-    // Check if user has permission to view this farm's dashboard
-    // In test mode, we bypass this check to allow tests to run
-    if (!isTestingMode && farm.farmerId !== req.user.userId && req.user.role !== 'admin') {
-      logger.warn(`Unauthorized access attempt to farm dashboard for farm ${farmId} by user ${req.user.userId} (${req.user.role})`);
-      return res.status(403).json({
-        success: false,
-        error: 'You do not have permission to view this farm\'s dashboard'
-      });
-    }
-    
-    if (isTestingMode) {
-      logger.debug(`[TEST] Permission check bypassed for farm ${farmId} - allowing access`);
-      
-      // Return mock data for testing
-      return res.status(200).json({
-        success: true,
-        farmId,
-        farmName: farm.name || 'Test Farm',
-        data: {
-          orderStats: {
-            totalOrders: 0,
-            pendingOrders: 0,
-            completedOrders: 0,
-            cancelledOrders: 0,
-            totalRevenue: 0
-          },
-          productStats: {
-            totalProducts: 0,
-            topSellingProducts: []
-          },
-          inventoryHealth: {
-            lowStock: 0,
-            outOfStock: 0,
-            inStock: 0
-          },
-          customerMetrics: {
-            totalCustomers: 0,
-            repeatCustomers: 0,
-            newCustomers: 0
-          },
-          period: req.query.period || 'month'
-        }
-      });
-    }
-    
-    logger.info(`Farm dashboard for farm ${farmId} accessed by ${req.user.email}`);
-
-    // Calculate date range based on period
+    // Get the user ID from the params
+    const { userId } = req.params;
     const period = req.query.period || 'month';
-    const endDate = new Date();
-    let startDate = new Date();
 
-    switch (period) {
-      case 'today':
-        startDate.setHours(0, 0, 0, 0);
-        break;
-      case 'week':
-        startDate.setDate(startDate.getDate() - 7);
-        break;
-      case 'month':
-        startDate.setMonth(startDate.getMonth() - 1);
-        break;
-      case 'year':
-        startDate.setFullYear(startDate.getFullYear() - 1);
-        break;
-      case 'all':
-        startDate = new Date(0); // Beginning of time
-        break;
+    // Skip strict UUID validation but ensure we have a user ID
+    if (!userId) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Bad Request', 
+        message: 'User ID is required' 
+      });
     }
 
-    // Get farm order statistics
-    const orderStats = await analyticsService.getFarmOrderStats(req.params.farmId, startDate, endDate);
+    // Check authorization - allow the user to view their own dashboard
+    const isAuthorized = req.user && (req.user.userId === userId || req.user.role === 'admin');
+    if (!isAuthorized) {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Forbidden', 
+        message: 'You do not have permission to access this dashboard.' 
+      });
+    }
+
+    // Find the farms associated with this user
+    const farms = await Farm.findAll({
+      where: { farmerId: userId }
+    });
+
+    // If no farms are found, return appropriate response
+    if (!farms || farms.length === 0) {
+      // Return 200 with empty dashboard data instead of 404
+      // This allows the frontend to show an empty dashboard with proper messaging
+      return res.status(200).json({
+        success: true,
+        farms: [],
+        message: 'No farms found for this user.',
+        stats: {
+          orders: {
+            total: 0,
+            pending: 0,
+            completed: 0,
+            cancelled: 0
+          },
+          revenue: {
+            total: 0,
+            today: 0,
+            thisWeek: 0,
+            thisMonth: 0
+          },
+          customers: 0,
+          products: 0
+        },
+        inventoryHealth: {
+          lowStock: 0,
+          outOfStock: 0,
+          inStock: 0,
+          totalProducts: 0
+        },
+        topSellingProducts: [],
+        recentOrders: []
+      });
+    }
+
+    // Use the first farm for dashboard stats
+    const farmId = farms[0].id;
+    const farmName = farms[0].name;
+
+    // Calculate date ranges for the requested period
+    const today = new Date();
+    const startDate = getStartDateByPeriod(period, today);
+
+    // Get orders stats
+    const orderStats = await analyticsService.getFarmOrderStats(farmId, startDate, today);
 
     // Get inventory status
     const inventory = await Product.findAll({
       attributes: [
-        'id',
+        ['id', 'productId'],  // Explicitly alias to avoid ambiguity
         'name',
         'category',
         'price',
-        'quantity',
+        'quantityAvailable',
         'unit',
         'isAvailable',
-        'updatedAt'
+        'status'
       ],
       where: {
-        farmId: req.params.farmId,
+        farmId: farmId,
         status: 'active'
-      },
-      order: [
-        ['quantity', 'ASC'], // Low stock items first
-        ['updatedAt', 'DESC'] // Recently updated
+      }
+    });
+
+    const inventoryHealth = {
+      lowStock: inventory.filter(p => p.quantityAvailable > 0 && p.quantityAvailable <= 5).length,
+      outOfStock: inventory.filter(p => p.quantityAvailable <= 0 || !p.isAvailable).length,
+      inStock: inventory.filter(p => p.quantityAvailable > 5 && p.isAvailable).length,
+      totalProducts: inventory.length
+    };
+
+    // Get top selling products
+    const topSellingProducts = await OrderItem.findAll({
+      attributes: [
+        ['productId', 'productId'],  // Use direct column name to avoid ambiguity
+        [Sequelize.fn('SUM', Sequelize.col('OrderItem.quantity')), 'totalSold'],
+        [Sequelize.fn('SUM', Sequelize.literal('"OrderItem"."quantity" * "OrderItem"."unitPrice"')), 'totalRevenue']
       ],
-      limit: 10
+      include: [{
+        model: Product,
+        as: 'OrderProduct',
+        attributes: ['name', 'category', 'unit', 'price'],
+        where: {
+          farmId: farmId
+        },
+        required: true
+      }, {
+        model: Order,
+        attributes: [],
+        where: {
+          createdAt: { [Op.between]: [startDate, today] }
+        },
+        required: true
+      }],
+      group: ['OrderItem.productId', 'OrderProduct.id', 'OrderProduct.name', 'OrderProduct.category', 'OrderProduct.unit', 'OrderProduct.price'],
+      order: [[Sequelize.fn('SUM', Sequelize.col('OrderItem.quantity')), 'DESC']], // Use the same function as in attributes instead of literal
+      limit: 5
     });
 
     // Get recent orders
     const recentOrders = await OrderItem.findAll({
       attributes: [
-        'orderId',
+        [Sequelize.col('Order.id'), 'orderId'],
         'quantity',
         'unitPrice',
-        'totalPrice',
-        'createdAt'
+        [Sequelize.literal('"OrderItem"."quantity" * "OrderItem"."unitPrice"'), 'totalPrice']
       ],
-      include: [
-        {
-          model: Product,
-          attributes: ['id', 'name'],
-          where: {
-            farmId: req.params.farmId
-          },
-          required: true
+      include: [{
+        model: Product,
+        as: 'OrderProduct',
+        attributes: ['name', 'id'],
+        where: {
+          farmId: farmId
         },
-        {
-          model: Order,
-          as: 'Order',
-          attributes: ['orderNumber', 'status', 'userId']
-        }
-      ],
-      order: [['createdAt', 'DESC']],
+        required: true
+      }, {
+        model: Order,
+        attributes: ['id', 'orderNumber', 'status', 'createdAt', 'userId'],
+        include: [{
+          model: User,
+          as: 'Customer',
+          attributes: ['firstName', 'lastName']
+        }]
+      }],
+      order: [[Sequelize.col('Order.createdAt'), 'DESC']],
       limit: 10
     });
 
     res.status(200).json({
       success: true,
+      farmId,
+      farmName,
       data: {
-        farmId: req.params.farmId,
-        farmName: farm.name,
         orderStats,
-        inventory,
+        inventoryHealth,
+        topSellingProducts,
         recentOrders,
         period
       }
@@ -499,13 +446,6 @@ router.get('/consumer/:userId', authenticate, async (req, res) => {
     const logger = dashboardLogger;
     const { userId } = req.params;
     
-    // Check if testing mode is enabled
-    const isTestingMode = process.env.NODE_ENV === 'test' || process.env.TESTING === 'true';
-    
-    if (isTestingMode) {
-      logger.debug(`[TEST] Consumer dashboard access attempt for user ${userId} by user: ${JSON.stringify(req.user)}`);
-    }
-    
     // Validate userId
     if (!userId) {
       return res.status(400).json({
@@ -515,17 +455,12 @@ router.get('/consumer/:userId', authenticate, async (req, res) => {
     }
     
     // Users can only view their own dashboard unless they are admins
-    // In test mode, we bypass this check to allow tests to run
-    if (!isTestingMode && userId !== req.user.userId && req.user.role !== 'admin') {
+    if (userId !== req.user.userId && req.user.role !== 'admin') {
       logger.warn(`Unauthorized access attempt to consumer dashboard for user ${userId} by user ${req.user.userId} (${req.user.role})`);
       return res.status(403).json({
         success: false,
         error: 'You do not have permission to view this user\'s dashboard'
       });
-    }
-    
-    if (isTestingMode) {
-      logger.debug(`[TEST] Permission check bypassed for consumer dashboard - allowing access`);
     }
     
     logger.info(`Consumer dashboard for user ${userId} accessed by ${req.user.email}`);
@@ -548,24 +483,6 @@ router.get('/consumer/:userId', authenticate, async (req, res) => {
         break;
     }
     
-    // For testing mode, provide mock data if needed
-    if (isTestingMode) {
-      return res.status(200).json({
-        success: true,
-        userId,
-        orderStats: {
-          totalOrders: 0,
-          completedOrders: 0,
-          pendingOrders: 0,
-          cancelledOrders: 0,
-          totalSpent: 0
-        },
-        recentOrders: [],
-        upcomingDeliveries: [],
-        period
-      });
-    }
-
     // Get user order statistics
     const orderStats = await analyticsService.getUserOrderStats(userId, startDate, endDate);
 
@@ -603,7 +520,7 @@ router.get('/consumer/:userId', authenticate, async (req, res) => {
     // Get upcoming deliveries
     const upcomingDeliveries = await Order.findAll({
       attributes: [
-        'id',
+        ['id', 'orderId'],  // Explicitly alias to avoid ambiguity
         'orderNumber',
         'status',
         'scheduledDeliveryTime',
@@ -641,6 +558,19 @@ router.get('/consumer/:userId', authenticate, async (req, res) => {
       message: error.message
     });
   }
+});
+
+/**
+ * @route GET /api/dashboard/health
+ * @description Health check endpoint for dashboard API
+ * @access Public
+ */
+router.get('/health', (req, res) => {
+  return res.status(200).json({
+    status: 'healthy',
+    message: 'Dashboard API is working properly',
+    timestamp: new Date().toISOString()
+  });
 });
 
 module.exports = router;

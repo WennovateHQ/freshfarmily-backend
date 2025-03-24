@@ -14,6 +14,7 @@ const { User } = require('../models/user');
 const { Delivery } = require('../models/delivery');
 const { sequelize } = require('../config/database');
 const { v4: uuidv4 } = require('uuid');
+const stripeService = require('../services/stripeService');
 
 const router = express.Router();
 
@@ -222,6 +223,71 @@ router.get('/:id', [
 });
 
 /**
+ * @route GET /api/orders/farm/:farmId
+ * @description Get all orders for a specific farm
+ * @access Private
+ */
+router.get('/farm/:farmId', [
+  authenticate,
+  requireActiveUser,
+  requirePermissions(['read']),
+  param('farmId').isUUID().withMessage('Invalid farm ID')
+], async (req, res) => {
+  try {
+    // Check for validation errors
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { farmId } = req.params;
+    
+    // Build query to find orders that include items from this farm
+    const orders = await Order.findAll({
+      include: [
+        {
+          model: User,
+          as: 'Consumer',
+          attributes: ['id', 'firstName', 'lastName', 'email']
+        },
+        {
+          model: OrderItem,
+          as: 'Items',
+          required: true,
+          where: { farmId: farmId },
+          include: [
+            {
+              model: Product,
+              as: 'OrderProduct',
+              attributes: ['id', 'name', 'price', 'unit']
+            }
+          ]
+        },
+        {
+          model: Delivery,
+          as: 'Delivery',
+          required: false
+        }
+      ],
+      order: [['createdAt', 'DESC']]
+    });
+
+    // Return the orders
+    return res.status(200).json({
+      success: true,
+      orders: orders
+    });
+  } catch (error) {
+    logger.error(`Error fetching orders for farm ${req.params.farmId}: ${error.message}`);
+    return res.status(500).json({
+      success: false,
+      error: 'Internal Server Error',
+      message: error.message || 'Failed to fetch farm orders'
+    });
+  }
+});
+
+/**
  * @route POST /api/orders
  * @description Create a new order
  * @access Private (consumers only)
@@ -241,9 +307,7 @@ router.post('/', [
   body('delivery.deliveryMethod').optional().isIn(['pickup', 'delivery']).withMessage('Invalid delivery method'),
   body('delivery.scheduledDeliveryTime').optional().isISO8601().withMessage('Invalid scheduled delivery time format'),
   body('delivery.deliveryInstructions').optional().trim(),
-  body('payment').isObject().withMessage('Payment info is required'),
-  body('payment.paymentMethod').isIn(['credit_card', 'paypal', 'bank_transfer']).withMessage('Invalid payment method'),
-  body('payment.paymentStatus').optional().isIn(['pending', 'completed', 'failed', 'refunded']).withMessage('Invalid payment status')
+  body('payment').optional().isObject().withMessage('Payment info is required')
 ], async (req, res) => {
   try {
     // Check for validation errors
@@ -261,7 +325,12 @@ router.post('/', [
           id: productIds,
           isAvailable: true,
           status: 'active'
-        }
+        },
+        include: [{
+          model: User,
+          as: 'Farmer',
+          attributes: ['id', 'firstName', 'lastName', 'email']
+        }]
       });
       
       // Check if all products were found
@@ -273,21 +342,45 @@ router.post('/', [
       }
       
       // Calculate order total
-      let totalAmount = 0;
+      let subtotal = 0;
       const orderItems = [];
+      let uniqueFarms = new Set();
       
       for (const item of req.body.items) {
         const product = products.find(p => p.id === item.productId);
         const itemTotal = product.price * item.quantity;
-        totalAmount += itemTotal;
+        subtotal += itemTotal;
+        uniqueFarms.add(product.Farmer.id);
         
         orderItems.push({
           productId: item.productId,
           quantity: item.quantity,
           pricePerUnit: product.price,
-          totalPrice: itemTotal
+          totalPrice: itemTotal,
+          farmerId: product.Farmer.id
         });
       }
+      
+      // Calculate taxes based on province
+      const province = req.body.delivery?.deliveryState || 'ON'; // Default to Ontario if not specified
+      const { totalTaxAmount } = stripeService.calculateTaxes(subtotal, province);
+      
+      // Add delivery fee
+      const deliveryFee = req.body.delivery?.deliveryMethod === 'pickup' ? 0 : 5.99;
+      
+      // Apply free delivery from referral program if available
+      let freeDeliveryApplied = false;
+      if (deliveryFee > 0) {
+        const referralInfo = await referralService.getUserReferralInfo(req.user.userId);
+        if (referralInfo && referralInfo.freeDeliveriesRemaining > 0) {
+          freeDeliveryApplied = true;
+        }
+      }
+      
+      const finalDeliveryFee = freeDeliveryApplied ? 0 : deliveryFee;
+      
+      // Calculate the total amount
+      const totalAmount = subtotal + totalTaxAmount + finalDeliveryFee;
       
       // Generate a unique order number
       const orderNumber = `ORD-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
@@ -296,9 +389,13 @@ router.post('/', [
       const order = await Order.create({
         userId: req.user.userId,
         orderNumber,
+        subtotalAmount: subtotal,
+        taxAmount: totalTaxAmount,
+        deliveryFee: finalDeliveryFee,
         totalAmount,
         status: 'pending',
-        paymentStatus: 'pending'
+        paymentStatus: 'pending',
+        freeDeliveryApplied
       }, { transaction: t });
       
       // Add order items
@@ -309,14 +406,13 @@ router.post('/', [
         }, { transaction: t });
       }
       
-      // Add payment info
-      const payment = req.body.payment;
+      // Create placeholder payment info
       await PaymentInfo.create({
         orderId: order.id,
-        paymentMethod: payment.paymentMethod,
-        paymentStatus: payment.paymentStatus || 'pending',
-        transactionId: payment.transactionId || null,
-        amount: totalAmount
+        paymentMethod: 'card',
+        paymentStatus: 'pending',
+        amount: totalAmount,
+        currency: 'CAD'
       }, { transaction: t });
       
       // Add delivery info if provided
@@ -348,7 +444,11 @@ router.post('/', [
     // Get the full order with associations
     const order = await Order.findByPk(result.id, {
       include: [
-        { model: OrderItem, as: 'Items' },
+        { 
+          model: OrderItem, 
+          as: 'Items',
+          include: ['Product']
+        },
         { model: PaymentInfo, as: 'Payment' },
         { model: Delivery, as: 'Delivery' }
       ]
@@ -358,7 +458,8 @@ router.post('/', [
     
     return res.status(201).json({
       message: 'Order created successfully',
-      order
+      order,
+      paymentInstructions: 'Proceed to payment using the order ID and our payment endpoints'
     });
   } catch (error) {
     logger.error(`Error creating order: ${error.message}`);
@@ -379,7 +480,8 @@ router.put('/:id/status', [
   requireActiveUser,
   requirePermissions(['admin']),
   param('id').isUUID().withMessage('Invalid order ID'),
-  body('status').isIn(['pending', 'processing', 'shipped', 'delivered', 'cancelled']).withMessage('Invalid status')
+  body('status').isIn(['pending', 'processing', 'shipped', 'delivered', 'cancelled']).withMessage('Invalid status'),
+  body('paymentStatus').optional().isIn(['pending', 'paid', 'failed', 'refunded']).withMessage('Invalid payment status')
 ], async (req, res) => {
   try {
     // Check for validation errors
@@ -399,9 +501,38 @@ router.put('/:id/status', [
     }
     
     // Update order status
-    await order.update({ status: req.body.status });
+    const previousStatus = order.status;
+    await order.update({
+      status: req.body.status,
+      paymentStatus: req.body.paymentStatus || order.paymentStatus
+    });
     
-    logger.info(`Order status updated: ${order.orderNumber}, status: ${order.status}`);
+    // If transitioning to cancelled, handle payment cancellation
+    if (req.body.status === 'cancelled' && previousStatus !== 'cancelled') {
+      // If payment was already processed, issue refund
+      if (order.paymentStatus === 'paid' && order.paymentIntentId) {
+        try {
+          const refund = await stripeService.refundPayment(order.paymentIntentId);
+          await order.update({ paymentStatus: 'refunded', refundId: refund.id });
+          
+          logger.info(`Refund processed for order ${order.id}: ${refund.id}`);
+        } catch (refundError) {
+          logger.error(`Failed to process refund for order ${order.id}: ${refundError.message}`);
+        }
+      }
+    }
+    
+    // If transitioning to delivered, process referral rewards if applicable
+    if (req.body.status === 'delivered' && previousStatus !== 'delivered') {
+      try {
+        // Process any pending referral rewards
+        await referralService.processDeliveryReferralRewards(order.id, order.userId);
+      } catch (referralError) {
+        logger.error(`Failed to process referral rewards for order ${order.id}: ${referralError.message}`);
+      }
+    }
+    
+    logger.info(`Order ${order.id} status updated from ${previousStatus} to ${req.body.status}`);
     
     return res.status(200).json({
       message: 'Order status updated successfully',

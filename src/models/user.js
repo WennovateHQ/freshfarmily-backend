@@ -85,7 +85,7 @@ const User = sequelize.define('User', {
     allowNull: true
   },
   refreshToken: {
-    type: DataTypes.STRING,
+    type: DataTypes.TEXT,
     allowNull: true
   }
 }, {

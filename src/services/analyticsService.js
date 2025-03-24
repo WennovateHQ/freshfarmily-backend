@@ -10,7 +10,7 @@ const { Product } = require('../models/product');
 const { Farm } = require('../models/farm');
 const { User } = require('../models/user');
 const { Delivery } = require('../models/delivery');
-const { QueryTypes, Op } = require('sequelize');
+const { QueryTypes, Op, Sequelize } = require('sequelize');
 const logger = require('../utils/logger');
 
 /**
@@ -175,215 +175,178 @@ async function getUserOrderStats(userId, startDate, endDate) {
  */
 async function getFarmOrderStats(farmId, startDate, endDate) {
   try {
-    // Validate inputs
-    if (!farmId) {
-      throw new Error('Farm ID is required');
-    }
-
-    // Format dates
-    const start = startDate ? new Date(startDate) : new Date(0);
-    const end = endDate ? new Date(endDate) : new Date();
-
-    // Total orders containing products from this farm
-    const orderCount = await OrderItem.count({
-      distinct: true,
-      col: 'orderId',
-      include: [
-        {
-          model: Product,
-          required: true,
-          where: { farmId },
-          attributes: []
-        },
-        {
-          model: Order,
-          as: 'Order',
-          required: true,
-          where: {
-            createdAt: {
-              [Op.between]: [start, end]
-            }
-          },
-          attributes: []
-        }
-      ]
+    // Get total orders and total revenue
+    const statistics = await sequelize.query(`
+      SELECT 
+        COUNT(DISTINCT "orders".id) as total_orders,
+        COALESCE(SUM("order_items".quantity * "order_items"."unitPrice"), 0) as total_revenue,
+        COUNT(DISTINCT "orders"."userId") as unique_customers
+      FROM "order_items"
+      JOIN "orders" ON "order_items"."orderId" = "orders".id
+      JOIN "products" ON "order_items"."productId" = "products".id
+      WHERE "products"."farmId" = :farmId
+        AND "orders"."createdAt" BETWEEN :startDate AND :endDate
+    `, {
+      replacements: { farmId, startDate, endDate },
+      type: sequelize.QueryTypes.SELECT
     });
 
-    // Total revenue for the farm
-    const totalRevenue = await OrderItem.sum('totalPrice', {
-      include: [
-        {
-          model: Product,
-          required: true,
-          where: { farmId },
-          attributes: []
-        },
-        {
-          model: Order,
-          as: 'Order',
-          required: true,
-          where: {
-            status: {
-              [Op.notIn]: ['cancelled', 'refunded']
-            },
-            createdAt: {
-              [Op.between]: [start, end]
-            }
-          },
-          attributes: []
-        }
-      ]
+    // Get order count by status
+    const ordersByStatus = await sequelize.query(`
+      SELECT 
+        "orders".status,
+        COUNT(DISTINCT "orders".id) as count
+      FROM "order_items"
+      JOIN "orders" ON "order_items"."orderId" = "orders".id
+      JOIN "products" ON "order_items"."productId" = "products".id
+      WHERE "products"."farmId" = :farmId
+        AND "orders"."createdAt" BETWEEN :startDate AND :endDate
+      GROUP BY "orders".status
+    `, {
+      replacements: { farmId, startDate, endDate },
+      type: sequelize.QueryTypes.SELECT
     });
 
-    // Total units sold
-    const totalUnitsSold = await OrderItem.sum('quantity', {
-      include: [
-        {
-          model: Product,
-          required: true,
-          where: { farmId },
-          attributes: []
-        },
-        {
-          model: Order,
-          as: 'Order',
-          required: true,
-          where: {
-            createdAt: {
-              [Op.between]: [start, end]
-            }
-          },
-          attributes: []
-        }
-      ]
+    // Get daily revenue data for chart
+    const dailyRevenue = await sequelize.query(`
+      SELECT 
+        DATE_TRUNC('day', "orders"."createdAt") as day,
+        COALESCE(SUM("order_items".quantity * "order_items"."unitPrice"), 0) as revenue
+      FROM "order_items"
+      JOIN "orders" ON "order_items"."orderId" = "orders".id
+      JOIN "products" ON "order_items"."productId" = "products".id
+      WHERE "products"."farmId" = :farmId
+        AND "orders"."createdAt" BETWEEN :startDate AND :endDate
+      GROUP BY DATE_TRUNC('day', "orders"."createdAt")
+      ORDER BY day
+    `, {
+      replacements: { farmId, startDate, endDate },
+      type: sequelize.QueryTypes.SELECT
     });
 
-    // Get top products sold
-    const topProducts = await OrderItem.findAll({
-      attributes: [
-        'productId',
-        [sequelize.fn('SUM', sequelize.col('quantity')), 'totalQuantity'],
-        [sequelize.fn('SUM', sequelize.col('totalPrice')), 'totalRevenue']
-      ],
-      include: [
-        {
-          model: Product,
-          required: true,
-          where: { farmId },
-          attributes: ['name', 'category', 'unit']
-        },
-        {
-          model: Order,
-          as: 'Order',
-          required: true,
-          where: {
-            createdAt: {
-              [Op.between]: [start, end]
-            }
-          },
-          attributes: []
-        }
-      ],
-      group: ['OrderItem.productId', 'Product.id', 'Product.name', 'Product.category', 'Product.unit'],
-      order: [[sequelize.fn('SUM', sequelize.col('totalPrice')), 'DESC']],
-      limit: 10,
-      raw: true
+    // Get weekly revenue data
+    const weeklyRevenue = await sequelize.query(`
+      SELECT 
+        DATE_TRUNC('week', "orders"."createdAt") as week,
+        COALESCE(SUM("order_items".quantity * "order_items"."unitPrice"), 0) as revenue
+      FROM "order_items"
+      JOIN "orders" ON "order_items"."orderId" = "orders".id
+      JOIN "products" ON "order_items"."productId" = "products".id
+      WHERE "products"."farmId" = :farmId
+        AND "orders"."createdAt" BETWEEN :startDate AND :endDate
+      GROUP BY DATE_TRUNC('week', "orders"."createdAt")
+      ORDER BY week
+    `, {
+      replacements: { farmId, startDate, endDate },
+      type: sequelize.QueryTypes.SELECT
     });
 
-    // Order status breakdown
-    const ordersByStatus = await Order.findAll({
-      attributes: [
-        'status', 
-        [sequelize.fn('COUNT', sequelize.col('id')), 'statusCount']
-      ],
-      include: [
-        {
-          model: OrderItem,
-          as: 'Items',
-          attributes: [],
-          required: true,
-          include: [
-            {
-              model: Product,
-              required: true,
-              where: { farmId },
-              attributes: []
-            }
-          ]
-        }
-      ],
-      where: {
-        createdAt: {
-          [Op.between]: [start, end]
-        }
-      },
-      group: ['Order.status'],
-      raw: true
+    // Get monthly revenue data
+    const monthlyRevenue = await sequelize.query(`
+      SELECT 
+        DATE_TRUNC('month', "orders"."createdAt") as month,
+        COALESCE(SUM("order_items".quantity * "order_items"."unitPrice"), 0) as revenue
+      FROM "order_items"
+      JOIN "orders" ON "order_items"."orderId" = "orders".id
+      JOIN "products" ON "order_items"."productId" = "products".id
+      WHERE "products"."farmId" = :farmId
+        AND "orders"."createdAt" BETWEEN :startDate AND :endDate
+      GROUP BY DATE_TRUNC('month', "orders"."createdAt")
+      ORDER BY month
+    `, {
+      replacements: { farmId, startDate, endDate },
+      type: sequelize.QueryTypes.SELECT
     });
 
-    // Convert to easily usable format
-    const statusCounts = {};
+    // Get top selling products for the farm
+    const topProducts = await sequelize.query(`
+      SELECT 
+        "products".id,
+        "products".name,
+        SUM("order_items".quantity) as total_quantity,
+        COALESCE(SUM("order_items".quantity * "order_items"."unitPrice"), 0) as total_revenue
+      FROM "order_items"
+      JOIN "products" ON "order_items"."productId" = "products".id
+      JOIN "orders" ON "order_items"."orderId" = "orders".id
+      WHERE "products"."farmId" = :farmId
+        AND "orders"."createdAt" BETWEEN :startDate AND :endDate
+        AND "orders".status NOT IN ('cancelled', 'refunded')
+      GROUP BY "products".id, "products".name
+      ORDER BY total_quantity DESC
+      LIMIT 5
+    `, {
+      replacements: { farmId, startDate, endDate },
+      type: sequelize.QueryTypes.SELECT
+    });
+
+    // Format and combine results
+    const { total_orders, total_revenue, unique_customers } = statistics[0] || { total_orders: 0, total_revenue: 0, unique_customers: 0 };
+    
+    // Format orders by status
+    const orderStatusCounts = {
+      pending: 0,
+      processing: 0,
+      shipped: 0,
+      delivered: 0,
+      cancelled: 0
+    };
+    
+    // Update counts based on query results
     ordersByStatus.forEach(item => {
-      statusCounts[item.status] = parseInt(item.statusCount);
+      if (item.status in orderStatusCounts) {
+        orderStatusCounts[item.status] = parseInt(item.count);
+      }
     });
-
-    // Calculate growth vs previous period
-    const previousStart = new Date(start);
-    previousStart.setDate(previousStart.getDate() - (end - start) / (1000 * 60 * 60 * 24));
-    
-    const previousRevenue = await OrderItem.sum('totalPrice', {
-      include: [
-        {
-          model: Product,
-          required: true,
-          where: { farmId },
-          attributes: []
-        },
-        {
-          model: Order,
-          as: 'Order',
-          required: true,
-          where: {
-            status: {
-              [Op.notIn]: ['cancelled', 'refunded']
-            },
-            createdAt: {
-              [Op.between]: [previousStart, start]
-            }
-          },
-          attributes: []
-        }
-      ]
-    }) || 0;
-    
-    // Calculate growth percentage
-    let growthPercentage = 0;
-    if (previousRevenue > 0) {
-      growthPercentage = ((totalRevenue - previousRevenue) / previousRevenue) * 100;
-    }
 
     return {
-      totalOrders: orderCount,
-      totalRevenue: totalRevenue || 0,
-      totalUnitsSold: totalUnitsSold || 0,
-      averageOrderValue: orderCount > 0 ? totalRevenue / orderCount : 0,
-      ordersByStatus: statusCounts,
-      growthVsPreviousPeriod: {
-        previousPeriodRevenue: previousRevenue,
-        growthPercentage: growthPercentage
+      orders: {
+        total: parseInt(total_orders) || 0,
+        ...orderStatusCounts
       },
+      revenue: {
+        total: parseFloat(total_revenue) || 0,
+        daily: dailyRevenue.map(day => ({
+          date: day.day,
+          amount: parseFloat(day.revenue) || 0
+        })),
+        weekly: weeklyRevenue.map(week => ({
+          week: week.week,
+          amount: parseFloat(week.revenue) || 0
+        })),
+        monthly: monthlyRevenue.map(month => ({
+          month: month.month,
+          amount: parseFloat(month.revenue) || 0
+        }))
+      },
+      customers: parseInt(unique_customers) || 0,
       topProducts: topProducts.map(p => ({
-        productId: p.productId,
-        name: p['Product.name'],
-        category: p['Product.category'],
-        unit: p['Product.unit'],
-        totalQuantity: parseFloat(p.totalQuantity),
-        totalRevenue: parseFloat(p.totalRevenue)
+        productId: p.id,
+        name: p.name,
+        totalQuantity: parseFloat(p.total_quantity),
+        totalRevenue: parseFloat(p.total_revenue)
       }))
     };
   } catch (error) {
-    logger.error(`Error calculating farm order stats: ${error.message}`);
-    throw error;
+    logger.error(`Error getting farm order stats: ${error.message}`);
+    // Return empty stats on error instead of throwing
+    return {
+      orders: {
+        total: 0,
+        pending: 0,
+        processing: 0,
+        shipped: 0,
+        delivered: 0,
+        cancelled: 0
+      },
+      revenue: {
+        total: 0,
+        daily: [],
+        weekly: [],
+        monthly: []
+      },
+      customers: 0,
+      topProducts: []
+    };
   }
 }
 

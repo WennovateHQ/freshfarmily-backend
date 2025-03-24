@@ -1,0 +1,85 @@
+FreshFarmily Production Seed Log - 2025-03-18T21:13:09.513Z
+
+Connecting to database...
+Database connection established successfully!
+
+!!! WARNING: RESETTING DATABASE - all existing data will be lost! !!!
+Database reset and recreated.
+Creating users...
+Created admin user: admin@freshfarmily.com
+Created farmer user: farmer@freshfarmily.com
+Created farmer user: farmer2@freshfarmily.com
+Created farmer user: farmer3@freshfarmily.com
+Created driver user: driver@freshfarmily.com
+Created driver user: driver2@freshfarmily.com
+Created consumer user: consumer@freshfarmily.com
+Created consumer user: consumer2@freshfarmily.com
+Created consumer user: consumer3@freshfarmily.com
+Created consumer user: consumer4@freshfarmily.com
+Created consumer user: consumer5@freshfarmily.com
+Total users created: 11
+
+Creating farms...
+Created farm: Runte - Ratke Farm
+Created farm: Kohler Group Farm
+Created farm: Ferry - Hills Farm
+Created farm: Wiegand Group Farm
+Created farm: Kiehn LLC Farm
+Total farms created: 5
+
+Creating products...
+Created product: Recycled Keyboard
+Created product: Ergonomic Bacon
+Created product: Fantastic Shoes
+Created product: Generic Pants
+Created product: Unbranded Pizza
+Created product: Elegant Shoes
+Created product: Fresh Cheese
+Created product: Ergonomic Tuna
+Created product: Sleek Keyboard
+Created product: Awesome Shoes
+Created product: Electronic Cheese
+Created product: Generic Soap
+Created product: Generic Shoes
+Created product: Rustic Pizza
+Created product: Electronic Mouse
+Created product: Frozen Ball
+Created product: Recycled Towels
+Created product: Licensed Tuna
+Created product: Sleek Cheese
+Created product: Fantastic Car
+Created product: Practical Chips
+Total products created: 21
+
+Creating orders...
+Created order #ORD-393993-9798 for consumer@freshfarmily.com
+Created order #ORD-394078-4060 for consumer@freshfarmily.com
+Created order #ORD-394138-6899 for consumer@freshfarmily.com
+Created order #ORD-394160-7847 for consumer2@freshfarmily.com
+Created order #ORD-394182-8888 for consumer2@freshfarmily.com
+Created order #ORD-394201-2932 for consumer2@freshfarmily.com
+Created order #ORD-394220-9836 for consumer3@freshfarmily.com
+Created order #ORD-394237-6105 for consumer4@freshfarmily.com
+Created order #ORD-394261-4085 for consumer4@freshfarmily.com
+Created order #ORD-394280-2235 for consumer5@freshfarmily.com
+Created order #ORD-394302-8508 for consumer5@freshfarmily.com
+Total orders created: 11
+
+✅ Database successfully seeded with production test data!
+
+Summary of created entities:
+- 1 admin users
+- 3 farmer users
+- 2 driver users
+- 5 consumer users
+- 5 farms
+- 21 products
+- 11 orders
+
+Login credentials for testing:
+Admin: admin@freshfarmily.com / password123
+Farmer: farmer@freshfarmily.com / password123
+Driver: driver@freshfarmily.com / password123
+Consumer: consumer@freshfarmily.com / password123
+
+Detailed log saved to: C:\Users\totur\Downloads\FreshFarmily\CascadeProjects\windsurf-project\node-backend\scripts\seed-log.txt

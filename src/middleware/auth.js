@@ -37,27 +37,11 @@ const authenticate = async (req, res, next) => {
       const decoded = verifyToken(token);
       authLogger.debug(`Token decoded for user: ${decoded.userId}`);
       
-      // Check if we're in testing mode
-      const isTestingMode = process.env.NODE_ENV === 'test' || process.env.TESTING === 'true';
-      
-      // Enhanced test mode logging for debugging
-      if (isTestingMode) {
-        authLogger.debug(`[TEST] Authenticating request to ${req.originalUrl}`);
-        authLogger.debug(`[TEST] User token: ${token.substring(0, 15)}...`);
-        authLogger.debug(`[TEST] Headers: ${JSON.stringify(req.headers)}`);
-      }
-      
       // Set user info in request
       req.user = {
         userId: decoded.userId,
         role: decoded.role
       };
-      
-      // Log user context in test mode for debugging
-      if (isTestingMode) {
-        authLogger.debug(`[TEST] Authentication successful for user: ${JSON.stringify(req.user)}`);
-        // authLogger.debug(`[TEST] User permissions: ${JSON.stringify(jwtUtils.getPermissionsForRole(req.user.role))}`);
-      }
       
       next();
     } catch (tokenError) {

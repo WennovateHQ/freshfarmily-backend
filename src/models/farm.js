@@ -33,7 +33,9 @@ const Farm = sequelize.define('Farm', {
   },
   state: {
     type: DataTypes.STRING,
-    allowNull: false
+    allowNull: false,
+    // The field in the model is 'state' but the frontend sends 'province'
+    // Don't map to a different column name
   },
   zipCode: {
     type: DataTypes.STRING,
@@ -66,6 +68,11 @@ const Farm = sequelize.define('Farm', {
     type: DataTypes.BOOLEAN,
     defaultValue: false
   },
+  isDefault: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false,
+    allowNull: false
+  },
   status: {
     type: DataTypes.ENUM('active', 'pending', 'suspended', 'closed'),
     defaultValue: 'pending'
@@ -85,10 +92,6 @@ const Farm = sequelize.define('Farm', {
       this.setDataValue('certifications', JSON.stringify(Array.isArray(value) ? value : []));
     }
   },
-  acceptsPickup: {
-    type: DataTypes.BOOLEAN,
-    defaultValue: true
-  },
   acceptsDelivery: {
     type: DataTypes.BOOLEAN,
     defaultValue: true
@@ -97,6 +100,13 @@ const Farm = sequelize.define('Farm', {
     type: DataTypes.FLOAT,
     defaultValue: 25 // miles
   },
+  // Field kept for backward compatibility with existing data
+  // but ignored in application logic since FreshFarmily now handles all deliveries
+  acceptsPickup: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false
+  },
+  // Field kept for backward compatibility but no longer used
   pickupInstructions: {
     type: DataTypes.TEXT,
     allowNull: true

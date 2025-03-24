@@ -9,8 +9,39 @@ const { body, validationResult } = require('express-validator');
 const authService = require('../services/authService');
 const { authenticate, requireActiveUser } = require('../middleware/auth');
 const { authLogger } = require('../utils/logger');
+const { User } = require('../models');
 
 const router = express.Router();
+
+/**
+ * @route GET /api/auth/db-check
+ * @description Check database connection and get user count
+ * @access Public
+ */
+router.get('/db-check', async (req, res) => {
+  try {
+    // Check database connection by counting users
+    const userCount = await User.count();
+    
+    // Return response with database status
+    return res.status(200).json({
+      status: 'success',
+      message: 'Database connection successful',
+      databaseConnected: true,
+      userCount: userCount,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    authLogger.error(`Database check error: ${error.message}`);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Database connection failed',
+      databaseConnected: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
 
 /**
  * @route POST /api/auth/register
@@ -95,7 +126,7 @@ router.post('/verify', [
 
 /**
  * @route POST /api/auth/login
- * @description Login with email and password
+ * @description Authenticate a user and return JWT tokens
  * @access Public
  */
 router.post('/login', [
@@ -109,18 +140,40 @@ router.post('/login', [
       return res.status(400).json({ errors: errors.array() });
     }
 
-    // Log request details for debugging
-    authLogger.debug(`Login request: ${req.body.email}, Request headers: ${JSON.stringify(req.headers)}`);
+    // Log request details for debugging (only at debug level, not console)
+    authLogger.debug(`Login request: ${req.body.email}`);
     
-    // Authenticate user
-    const user = await authService.authenticateUser(req.body.email, req.body.password);
-    
-    // Generate tokens
-    const tokens = await authService.generateTokens(user);
-    
-    // Return success response
-    authLogger.info(`User logged in successfully: ${user.email}`);
-    return res.status(200).json(tokens);
+    try {
+      // Authenticate user
+      const user = await authService.authenticateUser(req.body.email, req.body.password);
+      
+      // Generate tokens
+      const tokens = await authService.generateTokens(user);
+      
+      // Return success response with user data and tokens
+      const responseData = {
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        user: {
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          role: user.role,
+          permissions: user.role === 'consumer' ? ['read', 'create_order'] :
+                      user.role === 'farmer' ? ['read', 'write', 'update', 'delete_own'] :
+                      user.role === 'driver' ? ['read', 'update_delivery'] :
+                      user.role === 'admin' ? ['read', 'write', 'update', 'delete', 'admin'] : ['read']
+        }
+      };
+      
+      // Set content type explicitly
+      res.setHeader('Content-Type', 'application/json');
+      authLogger.info(`User logged in successfully: ${user.email}`);
+      return res.status(200).json(responseData);
+    } catch (authError) {
+      throw authError; // Pass to outer catch block for consistent error handling
+    }
   } catch (error) {
     authLogger.warn(`Login failed for ${req.body.email}: ${error.message}`);
     
@@ -275,6 +328,41 @@ router.get('/me', [authenticate, requireActiveUser], async (req, res) => {
 });
 
 /**
+ * @route GET /api/auth/user
+ * @description Get current user's information
+ * @access Private
+ */
+router.get('/user', authenticate, async (req, res) => {
+  try {
+    // User information is already attached to req.user by the authenticate middleware
+    const user = req.user;
+    
+    if (!user) {
+      return res.status(404).json({ 
+        error: 'User not found',
+        message: 'Could not find user information'
+      });
+    }
+
+    // Return user data without sensitive information
+    return res.status(200).json({
+      id: user.id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      role: user.role,
+      permissions: user.permissions || []
+    });
+  } catch (error) {
+    authLogger.error(`Error fetching user info: ${error.message}`);
+    return res.status(500).json({ 
+      error: 'Failed to fetch user info',
+      message: 'An error occurred while fetching user information'
+    });
+  }
+});
+
+/**
  * @route GET /api/auth/admin-check
  * @description Check if current user has admin permissions
  * @access Private (Admin only)
@@ -323,155 +411,6 @@ router.post('/logout', authenticate, async (req, res) => {
     return res.status(500).json({ 
       error: 'Logout failed',
       message: 'An error occurred during logout.'
-    });
-  }
-});
-
-/**
- * @route POST /api/auth/seed
- * @description Seed the database with test users (development/testing only)
- * @access Public - but only works in development or testing environments
- */
-router.post('/seed', async (req, res) => {
-  try {
-    // Only allow in development or testing mode
-    if (process.env.NODE_ENV !== 'development' && process.env.NODE_ENV !== 'test') {
-      return res.status(403).json({ 
-        error: 'Forbidden',
-        message: 'This endpoint is only available in development or testing environments.'
-      });
-    }
-
-    const { User, Profile } = require('../models/user');
-    const bcrypt = require('bcrypt');
-    
-    // Check if admin user already exists
-    let adminUser = await User.findOne({ where: { email: 'admin@freshfarmily.com' } });
-    
-    if (!adminUser) {
-      // Create admin user directly using model to ensure hooks run properly
-      adminUser = await User.create({
-        email: 'admin@freshfarmily.com',
-        password: 'Password123!',
-        firstName: 'Admin',
-        lastName: 'User',
-        role: 'admin',
-        status: 'active',
-        emailVerified: true
-      });
-      
-      // Create profile for admin
-      await Profile.create({
-        userId: adminUser.id,
-        address: '123 Admin St',
-        city: 'Admin City',
-        state: 'CA',
-        zipCode: '90210',
-        phoneNumber: '555-123-4567'
-      });
-    }
-    
-    // Check if farmer user already exists
-    let farmerUser = await User.findOne({ where: { email: 'farmer@freshfarmily.com' } });
-    
-    if (!farmerUser) {
-      // Create farmer user
-      farmerUser = await User.create({
-        email: 'farmer@freshfarmily.com',
-        password: 'Password123!',
-        firstName: 'Farmer',
-        lastName: 'User',
-        role: 'farmer',
-        status: 'active',
-        emailVerified: true
-      });
-      
-      // Create profile for farmer
-      await Profile.create({
-        userId: farmerUser.id,
-        address: '456 Farm Rd',
-        city: 'Farmville',
-        state: 'CA',
-        zipCode: '90001',
-        phoneNumber: '555-987-6543'
-      });
-    }
-    
-    // Check if consumer user already exists
-    let consumerUser = await User.findOne({ where: { email: 'consumer@freshfarmily.com' } });
-    
-    if (!consumerUser) {
-      // Create consumer user
-      consumerUser = await User.create({
-        email: 'consumer@freshfarmily.com',
-        password: 'Password123!',
-        firstName: 'Consumer',
-        lastName: 'User',
-        role: 'consumer',
-        status: 'active',
-        emailVerified: true
-      });
-      
-      // Create profile for consumer
-      await Profile.create({
-        userId: consumerUser.id,
-        address: '789 Consumer Ave',
-        city: 'Buyville',
-        state: 'CA',
-        zipCode: '90002',
-        phoneNumber: '555-789-0123'
-      });
-    }
-    
-    return res.status(200).json({
-      message: 'Test users created successfully',
-      users: ['admin@freshfarmily.com', 'farmer@freshfarmily.com', 'consumer@freshfarmily.com'],
-      adminId: adminUser.id,
-      farmerId: farmerUser.id,
-      consumerId: consumerUser.id
-    });
-  } catch (error) {
-    authLogger.error(`Seed error: ${error.message}`);
-    return res.status(500).json({ 
-      error: 'Seed failed',
-      message: `An error occurred while seeding test users: ${error.message}`
-    });
-  }
-});
-
-/**
- * @route GET /api/auth/users/test
- * @description Get test user IDs for testing purposes (development/testing only)
- * @access Public - but only works in development or testing environments
- */
-router.get('/users/test', async (req, res) => {
-  try {
-    // Only allow in development or testing mode
-    if (process.env.NODE_ENV !== 'development' && process.env.NODE_ENV !== 'test') {
-      return res.status(403).json({ 
-        error: 'Forbidden',
-        message: 'This endpoint is only available in development or testing environments.'
-      });
-    }
-
-    const { User } = require('../models/user');
-    
-    // Find all test users
-    const adminUser = await User.findOne({ where: { email: 'admin@freshfarmily.com' } });
-    const farmerUser = await User.findOne({ where: { email: 'farmer@freshfarmily.com' } });
-    const consumerUser = await User.findOne({ where: { email: 'consumer@freshfarmily.com' } });
-    
-    // Return user IDs
-    return res.status(200).json({
-      adminId: adminUser ? adminUser.id : null,
-      farmerId: farmerUser ? farmerUser.id : null,
-      consumerId: consumerUser ? consumerUser.id : null
-    });
-  } catch (error) {
-    authLogger.error(`Test users lookup error: ${error.message}`);
-    return res.status(500).json({ 
-      error: 'Test users lookup failed',
-      message: `An error occurred while looking up test users: ${error.message}`
     });
   }
 });

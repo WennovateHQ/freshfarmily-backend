@@ -24,6 +24,10 @@ const Delivery = sequelize.define('Delivery', {
     type: DataTypes.UUID,
     allowNull: true
   },
+  batchId: {
+    type: DataTypes.UUID,
+    allowNull: true
+  },
   status: {
     type: DataTypes.ENUM(
       'pending',
@@ -102,26 +106,9 @@ const Delivery = sequelize.define('Delivery', {
   },
   deliveryFee: {
     type: DataTypes.DECIMAL(10, 2),
-    allowNull: false,
-    defaultValue: 0.00
-  },
-  proofOfDeliveryUrl: {
-    type: DataTypes.STRING,
     allowNull: true
   },
-  customerSignature: {
-    type: DataTypes.BOOLEAN,
-    defaultValue: false
-  },
-  handlingInstructions: {
-    type: DataTypes.TEXT,
-    allowNull: true
-  },
-  failureReason: {
-    type: DataTypes.TEXT,
-    allowNull: true
-  },
-  rating: {
+  customerRating: {
     type: DataTypes.INTEGER,
     allowNull: true,
     validate: {
@@ -129,8 +116,28 @@ const Delivery = sequelize.define('Delivery', {
       max: 5
     }
   },
-  review: {
+  driverRating: {
+    type: DataTypes.INTEGER,
+    allowNull: true,
+    validate: {
+      min: 1,
+      max: 5
+    }
+  },
+  customerFeedback: {
     type: DataTypes.TEXT,
+    allowNull: true
+  },
+  driverFeedback: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  driverNotes: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  deliveryProof: {
+    type: DataTypes.STRING, // URL to delivery proof image
     allowNull: true
   },
   createdAt: {
@@ -142,59 +149,103 @@ const Delivery = sequelize.define('Delivery', {
     defaultValue: DataTypes.NOW
   }
 }, {
-  tableName: 'deliveries',
-  indexes: [
-    {
-      fields: ['orderId'],
-      unique: true
-    },
-    {
-      fields: ['driverId']
-    },
-    {
-      fields: ['status']
-    },
-    {
-      fields: ['scheduledDeliveryTime']
-    },
-    {
-      fields: ['deliveryZipCode']
-    }
-  ],
   hooks: {
-    afterCreate: (delivery) => {
-      logger.info(`Delivery created for order: ${delivery.orderId}`);
+    afterCreate: async (delivery) => {
+      logger.info(`New delivery created: ${delivery.id} for order ${delivery.orderId}`);
     },
-    afterUpdate: (delivery) => {
+    afterUpdate: async (delivery) => {
       if (delivery.changed('status')) {
-        logger.info(`Delivery status changed to ${delivery.status} for order: ${delivery.orderId}`);
-      }
-      if (delivery.changed('driverId')) {
-        logger.info(`Delivery assigned to driver ID: ${delivery.driverId} for order: ${delivery.orderId}`);
+        logger.info(`Delivery ${delivery.id} status updated to ${delivery.status}`);
       }
     }
   }
 });
 
-// Establish associations
-const establishAssociations = () => {
-  const { User } = require('./user');
-  const { Order } = require('./order');
-  
-  // Delivery belongs to Order
-  Delivery.belongsTo(Order, {
-    foreignKey: 'orderId',
-    onDelete: 'CASCADE'
-  });
-  
-  // Delivery belongs to User (driver)
-  Delivery.belongsTo(User, {
-    foreignKey: 'driverId',
-    as: 'Driver'
-  });
-  
-  logger.debug('Delivery associations established');
-};
+// Create DeliveryBatch model for managing batched deliveries
+const DeliveryBatch = sequelize.define('DeliveryBatch', {
+  id: {
+    type: DataTypes.UUID,
+    defaultValue: DataTypes.UUIDV4,
+    primaryKey: true
+  },
+  driverId: {
+    type: DataTypes.UUID,
+    allowNull: false
+  },
+  status: {
+    type: DataTypes.ENUM('active', 'completed', 'cancelled'),
+    defaultValue: 'active'
+  },
+  routeData: {
+    type: DataTypes.JSONB, // Store optimized route data
+    allowNull: false,
+    defaultValue: {}
+  },
+  deliveryCount: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+    validate: {
+      max: 3 // Maximum 3 deliveries per batch
+    }
+  },
+  startedAt: {
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW
+  },
+  completedAt: {
+    type: DataTypes.DATE,
+    allowNull: true
+  },
+  totalDistance: {
+    type: DataTypes.FLOAT, // in kilometers
+    allowNull: true
+  },
+  estimatedDuration: {
+    type: DataTypes.INTEGER, // in minutes
+    allowNull: true
+  },
+  actualDuration: {
+    type: DataTypes.INTEGER, // in minutes
+    allowNull: true
+  },
+  optimizationStrategy: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    defaultValue: 'balanced'
+  },
+  routeEfficiencyScore: {
+    type: DataTypes.FLOAT,
+    allowNull: true
+  },
+  driverRating: {
+    type: DataTypes.FLOAT,
+    allowNull: true,
+    validate: {
+      min: 1,
+      max: 5
+    }
+  },
+  createdAt: {
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW
+  },
+  updatedAt: {
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW
+  }
+}, {
+  hooks: {
+    afterCreate: async (batch) => {
+      logger.info(`New delivery batch created: ${batch.id} for driver ${batch.driverId} with ${batch.deliveryCount} deliveries`);
+    },
+    afterUpdate: async (batch) => {
+      if (batch.changed('status')) {
+        logger.info(`Delivery batch ${batch.id} status updated to ${batch.status}`);
+      }
+    }
+  }
+});
 
 // Create DeliveryTracking model for real-time tracking
 const DeliveryTracking = sequelize.define('DeliveryTracking', {
@@ -207,6 +258,10 @@ const DeliveryTracking = sequelize.define('DeliveryTracking', {
     type: DataTypes.UUID,
     allowNull: false
   },
+  driverId: {
+    type: DataTypes.UUID,
+    allowNull: false
+  },
   latitude: {
     type: DataTypes.FLOAT,
     allowNull: false
@@ -215,48 +270,112 @@ const DeliveryTracking = sequelize.define('DeliveryTracking', {
     type: DataTypes.FLOAT,
     allowNull: false
   },
+  speed: {
+    type: DataTypes.FLOAT, // in km/h
+    allowNull: true
+  },
+  heading: {
+    type: DataTypes.FLOAT, // in degrees
+    allowNull: true
+  },
   timestamp: {
     type: DataTypes.DATE,
     defaultValue: DataTypes.NOW
   },
+  batteryLevel: {
+    type: DataTypes.FLOAT, // percentage
+    allowNull: true
+  },
   accuracy: {
-    type: DataTypes.FLOAT,
+    type: DataTypes.FLOAT, // in meters
     allowNull: true
   },
-  speed: {
-    type: DataTypes.FLOAT,
-    allowNull: true
-  },
-  heading: {
-    type: DataTypes.FLOAT,
+  provider: {
+    type: DataTypes.STRING, // GPS, Network, etc.
     allowNull: true
   }
-}, {
-  tableName: 'delivery_tracking',
-  indexes: [
-    {
-      fields: ['deliveryId']
-    },
-    {
-      fields: ['timestamp']
-    }
-  ]
 });
 
-// DeliveryTracking associations
-DeliveryTracking.belongsTo(Delivery, {
-  foreignKey: 'deliveryId',
-  onDelete: 'CASCADE'
+// Create RouteOptimizationHistory model for tracking route optimizations
+const RouteOptimizationHistory = sequelize.define('RouteOptimizationHistory', {
+  id: {
+    type: DataTypes.UUID,
+    defaultValue: DataTypes.UUIDV4,
+    primaryKey: true
+  },
+  batchId: {
+    type: DataTypes.UUID,
+    allowNull: false
+  },
+  driverId: {
+    type: DataTypes.UUID,
+    allowNull: false
+  },
+  previousRoute: {
+    type: DataTypes.JSONB,
+    allowNull: true
+  },
+  optimizedRoute: {
+    type: DataTypes.JSONB,
+    allowNull: false
+  },
+  optimizationStrategy: {
+    type: DataTypes.STRING,
+    allowNull: false
+  },
+  optimizationTime: {
+    type: DataTypes.INTEGER, // in milliseconds
+    allowNull: true
+  },
+  distanceSaved: {
+    type: DataTypes.FLOAT, // in kilometers
+    allowNull: true
+  },
+  timeSaved: {
+    type: DataTypes.INTEGER, // in minutes
+    allowNull: true
+  },
+  createdAt: {
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW
+  }
 });
 
-Delivery.hasMany(DeliveryTracking, {
-  foreignKey: 'deliveryId',
-  as: 'TrackingPoints'
-});
+// Establish associations
+function establishAssociations() {
+  const { Order } = require('./order');
+  const { User } = require('./user');
 
-// Export models and association setter
+  // Order has one Delivery
+  Order.hasOne(Delivery, { foreignKey: 'orderId' });
+  Delivery.belongsTo(Order, { foreignKey: 'orderId' });
+
+  // Driver (User) has many Deliveries
+  User.hasMany(Delivery, { foreignKey: 'driverId', as: 'Deliveries' });
+  Delivery.belongsTo(User, { foreignKey: 'driverId', as: 'Driver' });
+  
+  // Driver has many DeliveryBatches
+  User.hasMany(DeliveryBatch, { foreignKey: 'driverId', as: 'DeliveryBatches' });
+  DeliveryBatch.belongsTo(User, { foreignKey: 'driverId', as: 'Driver' });
+  
+  // DeliveryBatch has many Deliveries
+  DeliveryBatch.hasMany(Delivery, { foreignKey: 'batchId', as: 'Deliveries' });
+  Delivery.belongsTo(DeliveryBatch, { foreignKey: 'batchId', as: 'Batch' });
+  
+  // Delivery has many DeliveryTracking records
+  Delivery.hasMany(DeliveryTracking, { foreignKey: 'deliveryId', as: 'TrackingRecords' });
+  DeliveryTracking.belongsTo(Delivery, { foreignKey: 'deliveryId' });
+  
+  // DeliveryBatch has many RouteOptimizationHistory records
+  DeliveryBatch.hasMany(RouteOptimizationHistory, { foreignKey: 'batchId', as: 'OptimizationHistory' });
+  RouteOptimizationHistory.belongsTo(DeliveryBatch, { foreignKey: 'batchId' });
+}
+
+// Call this function from models/index.js
 module.exports = {
   Delivery,
   DeliveryTracking,
-  establishDeliveryAssociations: establishAssociations
+  DeliveryBatch,
+  RouteOptimizationHistory,
+  establishAssociations
 };

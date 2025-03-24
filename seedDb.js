@@ -92,6 +92,8 @@ async function seedDatabase() {
     const existingFarmer = await User.findOne({ where: { email: farmerEmail } });
     const existingDriver = await User.findOne({ where: { email: driverEmail } });
     const existingConsumer = await User.findOne({ where: { email: consumerEmail } });
+
+    // No need to manually hash passwords - the User model hooks will handle it
     
     // Create admin user
     let adminUser;

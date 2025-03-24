@@ -4,7 +4,7 @@
  * Sets up the Sequelize connection to PostgreSQL
  */
 
-const { Sequelize } = require('sequelize');
+const { Sequelize, DataTypes } = require('sequelize');
 const logger = require('../utils/logger');
 require('dotenv').config();
 
@@ -14,14 +14,13 @@ const {
   DB_PORT,
   DB_NAME,
   DB_USER,
-  DB_PASSWORD,
-  TESTING
+  DB_PASSWORD
 } = process.env;
 
 // Create Sequelize instance
 let sequelize;
 
-// Always use PostgreSQL database even in testing mode
+// Use PostgreSQL database
 logger.info('Using PostgreSQL database');
 sequelize = new Sequelize(DB_NAME, DB_USER, DB_PASSWORD, {
   host: DB_HOST,
@@ -37,36 +36,27 @@ sequelize = new Sequelize(DB_NAME, DB_USER, DB_PASSWORD, {
 });
 
 // Test database connection
-const testConnection = async () => {
+async function testConnection() {
   try {
-    logger.info('Testing database connection...');
-    logger.info(`Database: ${DB_NAME}, User: ${DB_USER}, Host: ${DB_HOST}`);
     await sequelize.authenticate();
-    logger.info('✅ Database connection has been established successfully.');
+    logger.info('Database connection has been established successfully.');
     return true;
   } catch (error) {
-    logger.error(`❌ Unable to connect to the database: ${error.message}`);
-    if (process.env.NODE_ENV === 'production') {
-      logger.error('Database connection failure in PRODUCTION environment!');
-      process.exit(1); // Exit in production, database is critical
-    }
+    logger.error('Unable to connect to the database:', error);
     return false;
   }
-};
+}
 
 // Test database connection
 testConnection()
   .then(success => {
-    if (!success && TESTING !== 'true') {
-      logger.warn('Using in-memory mode due to database connection failure');
+    if (!success) {
+      logger.warn('Application will continue, but database functionality may be limited.');
     }
-  })
-  .catch(err => {
-    logger.error(`Unexpected error during database connection test: ${err.message}`);
   });
 
-// Export the sequelize instance
-module.exports = { 
+module.exports = {
   sequelize,
+  DataTypes,
   testConnection
 };
