@@ -889,9 +889,4 @@ router.get('/farm/:farmId', async (req, res) => {
  */
 
 // Export the router to be mounted by app.js
-module.exports = {
-  productRouter: router,
-
-  // Add test products here to ensure they're available to any module that imports productRoutes
-  TEST_PRODUCTS: TEST_PRODUCTS
-};
+module.exports = router;

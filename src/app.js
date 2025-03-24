@@ -20,7 +20,7 @@ require('dotenv').config();
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
 const farmRoutes = require('./routes/farmRoutes');
-const { productRouter } = require('./routes/productRoutes');
+const productRoutes = require('./routes/productRoutes');
 const orderRoutes = require('./routes/orderRoutes');
 const deliveryRoutes = require('./routes/deliveryRoutes');
 const analyticsRoutes = require('./routes/analyticsRoutes');
@@ -31,6 +31,7 @@ const driverRoutes = require('./routes/driverRoutes');
 const wishlistRoutes = require('./routes/wishlistRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
 const farmerRoutes = require('./routes/farmerRoutes');
+const settingsRoutes = require('./routes/settingsRoutes'); // Import settings routes
 
 // Initialize Express app
 const app = express();
@@ -119,7 +120,7 @@ apiRouter.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, { explorer:
 apiRouter.use('/auth', authRoutes);
 apiRouter.use('/users', userRoutes);
 apiRouter.use('/farms', farmRoutes);
-apiRouter.use('/products', productRouter);
+apiRouter.use('/products', productRoutes);
 apiRouter.use('/orders', orderRoutes);
 apiRouter.use('/deliveries', deliveryRoutes);
 apiRouter.use('/analytics', analyticsRoutes);
@@ -130,6 +131,7 @@ apiRouter.use('/drivers', driverRoutes);
 apiRouter.use('/wishlist', wishlistRoutes);
 apiRouter.use('/upload', uploadRoutes); // Mount upload routes
 apiRouter.use('/farmers', farmerRoutes); // Mount farmer routes
+apiRouter.use('/settings', settingsRoutes); // Mount settings routes
 
 // Mount all API routes under /api
 app.use('/api', apiRouter);
