@@ -87,6 +87,28 @@ const User = sequelize.define('User', {
   refreshToken: {
     type: DataTypes.TEXT,
     allowNull: true
+  },
+  // Added isActive stripeCustomerId, stripeAccountId 
+  // createdAt and updatedAt fields for the User Schema
+  isActive: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: true
+  },
+  stripeCustomerId: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  stripeAccountId: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  createdAt: {
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW
+  },
+  updatedAt: {
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW
   }
 }, {
   // Add hooks (lifecycle callbacks)
@@ -158,6 +180,15 @@ const Profile = sequelize.define('Profile', {
   profileImage: {
     type: DataTypes.STRING,
     allowNull: true
+  },
+  // Added createdAt and updatedAt fields for the User Schema
+  createdAt: {
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW
+  },
+  updatedAt: {
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW
   }
 });
 
