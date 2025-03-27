@@ -7,7 +7,7 @@
  * - ReferralHistory
  */
 
-// Changed 'users' to 'Users' to match the User schema
+// Changed 'users' to 'user' to match the User schema
 const { DataTypes } = require('sequelize');
 
 async function up(queryInterface, Sequelize) {
@@ -24,7 +24,7 @@ async function up(queryInterface, Sequelize) {
       type: DataTypes.UUID,
       allowNull: false,
       references: {
-        model: 'Users',
+        model: 'user',
         key: 'id'
       }
     },
@@ -32,7 +32,7 @@ async function up(queryInterface, Sequelize) {
       type: DataTypes.UUID,
       allowNull: true,
       references: {
-        model: 'Users',
+        model: 'user',
         key: 'id'
       }
     },
@@ -118,7 +118,7 @@ async function up(queryInterface, Sequelize) {
       type: DataTypes.UUID,
       allowNull: false,
       references: {
-        model: 'Users',
+        model: 'user',
         key: 'id'
       }
     },
@@ -126,7 +126,7 @@ async function up(queryInterface, Sequelize) {
       type: DataTypes.UUID,
       allowNull: false,
       references: {
-        model: 'Users',
+        model: 'user',
         key: 'id'
       }
     },
