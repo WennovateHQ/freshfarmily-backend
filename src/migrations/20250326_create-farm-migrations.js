@@ -98,6 +98,18 @@ async function up(queryInterface, Sequelize) {
       type: DataTypes.TEXT,
       allowNull: true
     },
+    // ***** ADDED: farmerId column for linking farm to user *****
+    farmerId: {
+      type: DataTypes.UUID,
+      allowNull: false, // adjust based on your requirements
+      references: {
+        model: 'Users', // Ensure this matches your users table name
+        key: 'id'
+      },
+      onUpdate: 'CASCADE',
+      onDelete: 'CASCADE'
+    },
+    // **********************************************************
     createdAt: {
       type: DataTypes.DATE,
       defaultValue: Sequelize.fn('NOW')

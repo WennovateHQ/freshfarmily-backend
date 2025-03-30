@@ -41,6 +41,12 @@ const Farm = sequelize.define('Farm', {
     type: DataTypes.STRING,
     allowNull: false
   },
+  // ***** Added farmerId field for the association with the User model *****
+  farmerId: {
+    type: DataTypes.UUID,
+    allowNull: false // adjust allowNull based on your requirements
+  },
+  // ***********************************************************************
   latitude: {
     type: DataTypes.FLOAT,
     allowNull: true
