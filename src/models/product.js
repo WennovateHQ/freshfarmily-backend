@@ -186,6 +186,7 @@ const establishAssociations = () => {
   // Product belongs to Farm
   Product.belongsTo(Farm, {
     foreignKey: 'farmId',
+    as: 'Farm', // Added 'as: "Farm"' so that the association alias matches the frontend expectations
     onDelete: 'CASCADE'
   });
   
