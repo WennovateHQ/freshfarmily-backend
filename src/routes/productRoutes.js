@@ -566,7 +566,16 @@ router.post('/', [
   body('quantityAvailable').isFloat({ min: 0 }).withMessage('Quantity must be a positive number'),
   body('isOrganic').optional().isBoolean(),
   body('isAvailable').optional().isBoolean(),
-  body('imageUrl').optional().trim().isURL().withMessage('Invalid image URL'),
+  // Updated to Allow empty values or relative paths starting with "/"
+  body('imageUrl')
+  .optional()
+  .trim()
+  .custom(value => {
+    // Allow empty values or relative paths starting with "/"
+    if (!value || value.startsWith('/')) return true;
+    return /^(ftp|http|https):\/\/[^ "]+$/.test(value);
+  })
+  .withMessage('Invalid image URL'),
   body('harvestedDate').optional().isISO8601().withMessage('Invalid harvested date format'),
   body('expectedAvailability').optional().isISO8601().withMessage('Invalid expected availability date format'),
   body('tags').optional().isArray(),
@@ -580,6 +589,7 @@ router.post('/', [
     // Check for validation errors
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
+      console.error('Validation errors:', errors.array()); //Remove
       return res.status(400).json({ errors: errors.array() });
     }
 
@@ -607,6 +617,7 @@ router.post('/', [
 
     // Check farm status
     if (farm.status !== 'active' && req.user.role !== 'admin') {
+      console.error(`Farm status is ${farm.status} and user role is ${req.user.role}. Cannot add products to an inactive farm.`);
       return res.status(403).json({
         error: 'Forbidden',
         message: 'Cannot add products to an inactive farm'
