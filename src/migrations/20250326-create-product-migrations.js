@@ -74,7 +74,7 @@ async function up(queryInterface, Sequelize) {
     },
     tags: {
       type: DataTypes.JSON,
-      defaultValue: []
+      defaultValue: '[]'
     },
     nutritionInfo: {
       type: DataTypes.JSON,
@@ -97,7 +97,7 @@ async function up(queryInterface, Sequelize) {
       allowNull: true
     },
     status: {
-      type: Sequelize.ENUM('active', 'out_of_stock', 'coming_soon', 'archived'),
+      type: DataTypes.ENUM('active', 'out_of_stock', 'coming_soon', 'archived'),
       defaultValue: 'active'
     },
     createdAt: {
@@ -183,7 +183,7 @@ async function up(queryInterface, Sequelize) {
       defaultValue: false
     },
     status: {
-      type: Sequelize.ENUM('pending', 'approved', 'rejected'),
+      type: DataTypes.ENUM('pending', 'approved', 'rejected'),
       defaultValue: 'pending'
     },
     createdAt: {

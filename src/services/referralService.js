@@ -8,7 +8,9 @@
  * - Cashback calculation and tracking for farmers
  */
 
+// Database and model imports
 const { sequelize } = require('../config/database');
+const Sequelize = require('sequelize');
 const logger = require('../utils/logger');
 const { ReferralInfo, ReferralHistory } = require('../models/referral');
 const { User } = require('../models/user');
@@ -102,7 +104,7 @@ const processReferral = async (referralCode, newUserId, newUserRole) => {
     // Find the referrer based on the referral code
     const referrerInfo = await ReferralInfo.findOne({
       where: {
-        [sequelize.Op.or]: [
+        [Sequelize.Op.or]: [
           { farmerReferralCode: referralCode },
           { customerReferralCode: referralCode }
         ]
@@ -402,80 +404,133 @@ const applyFreeDeliveryIfAvailable = async (order, userId) => {
  */
 const getReferralStats = async (userId) => {
   try {
-    // Get user's referral info
-    const referralInfo = await ReferralInfo.findOne({
-      where: { userId }
-    });
+    logger.info(`Getting referral stats for user: ${userId}`);
     
-    if (!referralInfo) {
+    // Use direct SQL query to avoid potential ORM issues with missing columns
+    const [referralInfoRows] = await sequelize.query(
+      `SELECT * FROM referral_info WHERE "userId" = :userId`,
+      { 
+        replacements: { userId },
+        type: Sequelize.QueryTypes.SELECT
+      }
+    );
+    
+    // If no referral info found, return an empty response
+    if (!referralInfoRows || referralInfoRows.length === 0) {
+      logger.warn(`No referral info found for user ${userId}`);
       return {
         success: false,
         message: 'Referral information not found'
       };
     }
     
-    // Get users this user has referred
-    const referrals = await ReferralHistory.findAll({
-      where: { referrerId: userId },
-      include: [{
-        model: User,
-        as: 'ReferredUser',
-        attributes: ['id', 'firstName', 'lastName', 'email', 'role']
-      }]
-    });
+    // Get the referral info
+    const referralInfo = referralInfoRows;
     
-    // Get who referred this user
-    const referredBy = await ReferralHistory.findOne({
-      where: { referredId: userId },
-      include: [{
-        model: User,
-        as: 'Referrer',
-        attributes: ['id', 'firstName', 'lastName', 'email', 'role']
-      }]
-    });
-    
-    // Calculate stats
-    const farmerReferrals = referrals.filter(r => r.ReferredUser.role === 'farmer').length;
-    const customerReferrals = referrals.filter(r => r.ReferredUser.role === 'consumer').length;
-    
-    return {
+    // Create response with safe defaults for any potentially missing columns
+    const response = {
       success: true,
       referralInfo: {
-        farmerReferralCode: referralInfo.farmerReferralCode,
-        customerReferralCode: referralInfo.customerReferralCode,
-        remainingCredit: referralInfo.remainingCredit,
-        totalEarnedCredit: referralInfo.totalEarnedCredit,
-        freeDeliveriesRemaining: referralInfo.freeDeliveriesRemaining,
-        totalFreeDeliveries: referralInfo.totalFreeDeliveries,
-        referralStatus: referralInfo.referralStatus
+        farmerReferralCode: referralInfo.farmerReferralCode || referralInfo.referralCode || '',
+        customerReferralCode: referralInfo.customerReferralCode || referralInfo.referralCode || '',
+        remainingCredit: parseFloat(referralInfo.remainingCredit || 0),
+        totalEarnedCredit: parseFloat(referralInfo.totalEarnedCredit || 0),
+        freeDeliveriesRemaining: parseInt(referralInfo.freeDeliveriesRemaining || 0, 10),
+        totalFreeDeliveries: parseInt(referralInfo.totalFreeDeliveries || 0, 10),
+        referralStatus: referralInfo.referralStatus || 'active',
+        referralCount: parseInt(referralInfo.referralCount || 0, 10)
       },
       stats: {
-        totalReferrals: referrals.length,
-        farmerReferrals,
-        customerReferrals
+        totalReferrals: parseInt(referralInfo.referralCount || 0, 10),
+        farmerReferrals: 0,
+        customerReferrals: 0,
+        pendingReferrals: 0
       },
-      referredUsers: referrals.map(r => ({
-        id: r.ReferredUser.id,
-        name: `${r.ReferredUser.firstName} ${r.ReferredUser.lastName}`,
-        email: r.ReferredUser.email,
-        role: r.ReferredUser.role,
-        referralDate: r.createdAt,
-        rewardType: r.referrerRewardType,
-        rewardAmount: r.referrerRewardAmount,
-        freeDeliveries: r.referrerFreeDeliveries
-      })),
-      referredBy: referredBy ? {
-        id: referredBy.Referrer.id,
-        name: `${referredBy.Referrer.firstName} ${referredBy.Referrer.lastName}`,
-        email: referredBy.Referrer.email,
-        role: referredBy.Referrer.role,
-        referralDate: referredBy.createdAt,
-        referralType: referredBy.referralType
-      } : null
+      referredUsers: []
     };
+    
+    // Try to get referral history but don't fail if there's an error
+    try {
+      const [referralHistoryExists] = await sequelize.query(
+        `SELECT to_regclass('referral_history') as table_exists`
+      );
+      
+      const tableExists = referralHistoryExists[0]?.table_exists !== null;
+      
+      if (tableExists) {
+        // Get users referred by this user
+        const [referredUsers] = await sequelize.query(
+          `SELECT 
+            rh.id, rh."referralType", rh."referralCode", rh."referrerRewardType", 
+            rh."referrerRewardAmount", rh."referrerFreeDeliveries", rh."createdAt",
+            u.id as "userId", u."firstName", u."lastName", u.email, u.role
+           FROM referral_history rh
+           LEFT JOIN users u ON rh."referredId" = u.id
+           WHERE rh."referrerId" = :userId`,
+          { 
+            replacements: { userId },
+            type: Sequelize.QueryTypes.SELECT
+          }
+        );
+        
+        if (referredUsers && referredUsers.length > 0) {
+          // Calculate stats
+          response.stats.totalReferrals = referredUsers.length;
+          response.stats.farmerReferrals = referredUsers.filter(r => r.role === 'farmer').length;
+          response.stats.customerReferrals = referredUsers.filter(r => r.role === 'consumer').length;
+          
+          // Map referred users
+          response.referredUsers = referredUsers.map(r => ({
+            id: r.userId,
+            name: `${r.firstName || ''} ${r.lastName || ''}`.trim() || 'Unknown User',
+            email: r.email || null,
+            role: r.role || null,
+            referralDate: r.createdAt,
+            rewardType: r.referrerRewardType || 'none',
+            rewardAmount: parseFloat(r.referrerRewardAmount || 0),
+            freeDeliveries: parseInt(r.referrerFreeDeliveries || 0, 10)
+          }));
+        }
+        
+        // Find who referred this user (if anyone)
+        const [referrers] = await sequelize.query(
+          `SELECT 
+            rh.id, rh."referralType", rh."referralCode", rh."createdAt",
+            u.id as "userId", u."firstName", u."lastName", u.email, u.role
+           FROM referral_history rh
+           LEFT JOIN users u ON rh."referrerId" = u.id
+           WHERE rh."referredId" = :userId
+           LIMIT 1`,
+          { 
+            replacements: { userId },
+            type: Sequelize.QueryTypes.SELECT
+          }
+        );
+        
+        if (referrers && referrers.length > 0) {
+          const referrer = referrers[0];
+          response.referredBy = {
+            id: referrer.userId,
+            name: `${referrer.firstName || ''} ${referrer.lastName || ''}`.trim() || 'Unknown User',
+            email: referrer.email || null,
+            role: referrer.role || null,
+            referralDate: referrer.createdAt,
+            referralType: referrer.referralType || null
+          };
+        }
+      }
+    } catch (historyError) {
+      logger.warn(`Unable to fetch referral history: ${historyError.message}`);
+      // Continue with default values for stats and empty referredUsers array
+    }
+    
+    return response;
   } catch (error) {
     logger.error(`Error getting referral stats: ${error.message}`);
-    throw error;
+    return {
+      success: false,
+      message: `Error retrieving referral data: ${error.message}`
+    };
   }
 };
 

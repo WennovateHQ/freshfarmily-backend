@@ -338,6 +338,7 @@ router.post('/', [
     const farm = await Farm.create({
       ...farmData,
       farmerId: req.user.userId,
+      userId: req.user.userId, // Setting userId to the current user's ID
       status: 'pending', // New farms start as pending until approved by admin
       isVerified: false
     });

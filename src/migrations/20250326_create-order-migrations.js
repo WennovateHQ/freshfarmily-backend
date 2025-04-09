@@ -27,7 +27,7 @@ async function up(queryInterface, Sequelize) {
       unique: true
     },
     status: {
-      type: Sequelize.ENUM(
+      type: DataTypes.ENUM(
         'pending',
         'confirmed',
         'processing',
@@ -66,7 +66,7 @@ async function up(queryInterface, Sequelize) {
       defaultValue: 0.00
     },
     deliveryMethod: {
-      type: Sequelize.ENUM('pickup', 'delivery'),
+      type: DataTypes.ENUM('pickup', 'delivery'),
       allowNull: false,
       defaultValue: 'pickup'
     },
@@ -108,7 +108,7 @@ async function up(queryInterface, Sequelize) {
       defaultValue: 'card'
     },
     paymentStatus: {
-      type: Sequelize.ENUM('pending', 'paid', 'failed', 'refunded'),
+      type: DataTypes.ENUM('pending', 'paid', 'failed', 'refunded'),
       defaultValue: 'pending'
     },
     paymentIntentId: {
@@ -205,7 +205,7 @@ async function up(queryInterface, Sequelize) {
       allowNull: true
     },
     status: {
-      type: Sequelize.ENUM('pending', 'confirmed', 'cancelled', 'refunded'),
+      type: DataTypes.ENUM('pending', 'confirmed', 'cancelled', 'refunded'),
       defaultValue: 'pending'
     },
     createdAt: {

@@ -224,14 +224,17 @@ router.get('/:id', [
 
 /**
  * @route GET /api/orders/farm/:farmId
- * @description Get all orders for a specific farm
- * @access Private
+ * @description Get all orders for a specific farm with pagination
+ * @access Private (farmer or admin)
  */
 router.get('/farm/:farmId', [
   authenticate,
   requireActiveUser,
   requirePermissions(['read']),
-  param('farmId').isUUID().withMessage('Invalid farm ID')
+  param('farmId').isUUID().withMessage('Invalid farm ID'),
+  query('page').optional().isInt({ min: 1 }).withMessage('Page must be a positive integer'),
+  query('limit').optional().isInt({ min: 1, max: 100 }).withMessage('Limit must be between 1 and 100'),
+  query('status').optional().isIn(['pending', 'confirmed', 'processing', 'ready', 'out_for_delivery', 'delivered', 'picked_up', 'cancelled']).withMessage('Invalid status')
 ], async (req, res) => {
   try {
     // Check for validation errors
@@ -241,48 +244,121 @@ router.get('/farm/:farmId', [
     }
 
     const { farmId } = req.params;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const offset = (page - 1) * limit;
     
-    // Build query to find orders that include items from this farm
-    const orders = await Order.findAll({
-      include: [
-        {
-          model: User,
-          as: 'Consumer',
-          attributes: ['id', 'firstName', 'lastName', 'email']
-        },
-        {
-          model: OrderItem,
-          as: 'Items',
-          required: true,
-          where: { farmId: farmId },
-          include: [
-            {
-              model: Product,
-              as: 'OrderProduct',
-              attributes: ['id', 'name', 'price', 'unit']
-            }
-          ]
-        },
-        {
-          model: Delivery,
-          as: 'Delivery',
-          required: false
-        }
-      ],
-      order: [['createdAt', 'DESC']]
-    });
+    // Check if user is authorized to view these orders
+    // Only farm owner or admin can view
+    const isFarmOwner = await sequelize.query(
+      `SELECT COUNT(*) as count FROM farms WHERE id = :farmId AND "farmerId" = :userId`,
+      {
+        replacements: { farmId, userId: req.user.userId },
+        type: sequelize.QueryTypes.SELECT
+      }
+    );
+    
+    if (isFarmOwner[0].count === 0 && req.user.role !== 'admin') {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'You do not have permission to view orders for this farm'
+      });
+    }
+    
+    // Get orders that contain products from this farm
+    const orderData = await sequelize.query(
+      `SELECT DISTINCT 
+        o.id, 
+        o."orderNumber", 
+        o.status, 
+        o."totalAmount" as total,
+        o."createdAt" as date,
+        u.id as "userId",
+        u."firstName",
+        u."lastName",
+        u.email
+      FROM orders o
+      JOIN "order_items" oi ON o.id = oi."orderId"
+      JOIN products p ON oi."productId" = p.id
+      JOIN users u ON o."userId" = u.id
+      WHERE p."farmId" = :farmId
+      ORDER BY o."createdAt" DESC
+      LIMIT :limit OFFSET :offset`,
+      {
+        replacements: { farmId, limit, offset },
+        type: sequelize.QueryTypes.SELECT
+      }
+    );
 
-    // Return the orders
+    // Get total count for pagination
+    const countResult = await sequelize.query(
+      `SELECT COUNT(DISTINCT o.id) as total
+      FROM orders o
+      JOIN "order_items" oi ON o.id = oi."orderId"
+      JOIN products p ON oi."productId" = p.id
+      WHERE p."farmId" = :farmId`,
+      {
+        replacements: { farmId },
+        type: sequelize.QueryTypes.SELECT
+      }
+    );
+
+    // Format the customer data and order items for each order
+    const formattedOrders = orderData.map(order => ({
+      id: order.id,
+      orderNumber: order.orderNumber,
+      status: order.status,
+      total: parseFloat(order.total),
+      date: order.date,
+      customer: {
+        id: order.userId,
+        name: `${order.firstName} ${order.lastName}`,
+        email: order.email
+      }
+    }));
+
+    // Get items for each order (in a separate query to avoid duplication)
+    for (const order of formattedOrders) {
+      const items = await sequelize.query(
+        `SELECT 
+          oi.id,
+          oi.quantity,
+          oi."unitPrice",
+          oi.quantity * oi."unitPrice" as subtotal,
+          p.name,
+          p.id as "productId",
+          p.unit
+        FROM "order_items" oi
+        JOIN products p ON oi."productId" = p.id
+        WHERE oi."orderId" = :orderId AND p."farmId" = :farmId`,
+        {
+          replacements: { orderId: order.id, farmId },
+          type: sequelize.QueryTypes.SELECT
+        }
+      );
+      
+      order.items = items.map(item => ({
+        id: item.id,
+        productId: item.productId,
+        name: item.name,
+        quantity: parseInt(item.quantity),
+        unitPrice: parseFloat(item.unitPrice),
+        subtotal: parseFloat(item.subtotal),
+        unit: item.unit
+      }));
+    }
+
     return res.status(200).json({
-      success: true,
-      orders: orders
+      orders: formattedOrders,
+      totalCount: parseInt(countResult[0].total),
+      totalPages: Math.ceil(parseInt(countResult[0].total) / limit),
+      currentPage: page
     });
   } catch (error) {
     logger.error(`Error fetching orders for farm ${req.params.farmId}: ${error.message}`);
     return res.status(500).json({
-      success: false,
       error: 'Internal Server Error',
-      message: error.message || 'Failed to fetch farm orders'
+      message: `Failed to retrieve orders for farm: ${error.message}`
     });
   }
 });

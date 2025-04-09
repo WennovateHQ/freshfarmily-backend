@@ -51,35 +51,49 @@ const Product = sequelize.define('Product', {
   },
   isOrganic: {
     type: DataTypes.BOOLEAN,
+    allowNull: false,
     defaultValue: false
   },
   isAvailable: {
     type: DataTypes.BOOLEAN,
+    allowNull: false,
     defaultValue: true
   },
-  imageUrl: {
-    type: DataTypes.STRING,
+  nutritionalInfo: {
+    type: DataTypes.JSONB,
     allowNull: true
   },
-  harvestedDate: {
+  storageInstructions: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  growingPractices: {
+    type: DataTypes.ARRAY(DataTypes.STRING),
+    allowNull: true
+  },
+  harvestDate: {
     type: DataTypes.DATE,
     allowNull: true
   },
-  expectedAvailability: {
-    type: DataTypes.DATE,
+  certifications: {
+    type: DataTypes.ARRAY(DataTypes.STRING),
+    allowNull: true
+  },
+  allergens: {
+    type: DataTypes.ARRAY(DataTypes.STRING),
+    allowNull: true
+  },
+  ingredients: {
+    type: DataTypes.TEXT,
+    allowNull: true
+  },
+  preparationTips: {
+    type: DataTypes.TEXT,
     allowNull: true
   },
   tags: {
-    type: DataTypes.JSON,
-    defaultValue: '[]'
-  },
-  nutritionInfo: {
-    type: DataTypes.JSON,
+    type: DataTypes.ARRAY(DataTypes.STRING),
     allowNull: true
-  },
-  isFeatured: {
-    type: DataTypes.BOOLEAN,
-    defaultValue: false
   },
   discountPercent: {
     type: DataTypes.INTEGER,
@@ -97,18 +111,18 @@ const Product = sequelize.define('Product', {
     type: DataTypes.DECIMAL(10, 2),
     allowNull: true
   },
-  status: {
-    type: DataTypes.ENUM('active', 'out_of_stock', 'coming_soon', 'archived'),
-    defaultValue: 'active'
+  isFeatured: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false
   },
-  createdAt: {
-    type: DataTypes.DATE,
-    defaultValue: DataTypes.NOW
+  imageUrl: {
+    type: DataTypes.STRING,
+    allowNull: true
   },
-  updatedAt: {
+  expectedAvailability: {
     type: DataTypes.DATE,
-    defaultValue: DataTypes.NOW
-  }
+    allowNull: true
+  },
 }, {
   tableName: 'products',
   indexes: [
@@ -119,7 +133,7 @@ const Product = sequelize.define('Product', {
       fields: ['category']
     },
     {
-      fields: ['isAvailable', 'status']
+      fields: ['isAvailable']
     },
     {
       fields: ['name']
@@ -193,7 +207,7 @@ const establishAssociations = () => {
   // Product has many ProductPhotos
   Product.hasMany(ProductPhoto, {
     foreignKey: 'productId',
-    as: 'Photos'
+    as: 'ProductPhotos'
   });
   
   ProductPhoto.belongsTo(Product, {

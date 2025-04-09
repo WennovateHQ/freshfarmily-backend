@@ -24,13 +24,15 @@ const ReferralInfo = sequelize.define('ReferralInfo', {
       key: 'id'
     }
   },
+  // Make referredBy optional and add a comment about it possibly not existing in some database deployments
   referredBy: {
     type: DataTypes.UUID,
     allowNull: true,
     references: {
       model: 'users',
       key: 'id'
-    }
+    },
+    comment: 'May not exist in all database deployments. References the user who referred this user.'
   },
   referralType: {
     type: DataTypes.ENUM,
@@ -109,46 +111,50 @@ const ReferralInfo = sequelize.define('ReferralInfo', {
   ],
   hooks: {
     beforeCreate: async (referralInfo) => {
-      // Generate unique referral codes if not provided
-      if (!referralInfo.farmerReferralCode) {
-        let isUnique = false;
-        let farmerCode;
-        
-        // Generate until we find a unique code
-        while (!isUnique) {
-          farmerCode = 'FF' + crypto.randomBytes(4).toString('hex').toUpperCase();
+      try {
+        // Generate unique referral codes if not provided
+        if (!referralInfo.farmerReferralCode) {
+          let isUnique = false;
+          let farmerCode;
           
-          // Check if code exists
-          const existingCode = await ReferralInfo.findOne({
-            where: { farmerReferralCode: farmerCode }
-          });
+          // Generate until we find a unique code
+          while (!isUnique) {
+            farmerCode = 'FF' + crypto.randomBytes(4).toString('hex').toUpperCase();
+            
+            // Check if code exists
+            const existingCode = await ReferralInfo.findOne({
+              where: { farmerReferralCode: farmerCode }
+            });
+            
+            isUnique = !existingCode;
+          }
           
-          isUnique = !existingCode;
+          referralInfo.farmerReferralCode = farmerCode;
         }
         
-        referralInfo.farmerReferralCode = farmerCode;
-      }
-      
-      if (!referralInfo.customerReferralCode) {
-        let isUnique = false;
-        let customerCode;
-        
-        // Generate until we find a unique code
-        while (!isUnique) {
-          customerCode = 'FC' + crypto.randomBytes(4).toString('hex').toUpperCase();
+        if (!referralInfo.customerReferralCode) {
+          let isUnique = false;
+          let customerCode;
           
-          // Check if code exists
-          const existingCode = await ReferralInfo.findOne({
-            where: { customerReferralCode: customerCode }
-          });
+          // Generate until we find a unique code
+          while (!isUnique) {
+            customerCode = 'FC' + crypto.randomBytes(4).toString('hex').toUpperCase();
+            
+            // Check if code exists
+            const existingCode = await ReferralInfo.findOne({
+              where: { customerReferralCode: customerCode }
+            });
+            
+            isUnique = !existingCode;
+          }
           
-          isUnique = !existingCode;
+          referralInfo.customerReferralCode = customerCode;
         }
         
-        referralInfo.customerReferralCode = customerCode;
+        logger.debug(`Generated unique referral codes for user ${referralInfo.userId}`);
+      } catch (error) {
+        logger.error('Error generating referral codes:', error);
       }
-      
-      logger.debug(`Generated unique referral codes for user ${referralInfo.userId}`);
     }
   }
 });
@@ -273,6 +279,7 @@ const establishAssociations = () => {
     as: 'User'
   });
   
+  // Note: referredBy in ReferralInfo refers to who referred this user
   ReferralInfo.belongsTo(User, {
     foreignKey: 'referredBy',
     as: 'Referrer'
@@ -281,12 +288,27 @@ const establishAssociations = () => {
   // ReferralHistory associations
   ReferralHistory.belongsTo(User, {
     foreignKey: 'referrerId',
-    as: 'Referrer'
+    as: 'Referrer',
+    onDelete: 'SET NULL',
+    onUpdate: 'CASCADE'
   });
   
   ReferralHistory.belongsTo(User, {
     foreignKey: 'referredId',
-    as: 'ReferredUser'
+    as: 'ReferredUser',
+    onDelete: 'SET NULL',
+    onUpdate: 'CASCADE'
+  });
+  
+  // Allow User to access their referrals
+  User.hasMany(ReferralHistory, {
+    foreignKey: 'referrerId',
+    as: 'SentReferrals'
+  });
+  
+  User.hasMany(ReferralHistory, {
+    foreignKey: 'referredId',
+    as: 'ReceivedReferrals'
   });
 };
 

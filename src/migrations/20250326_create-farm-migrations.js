@@ -90,14 +90,6 @@ async function up(queryInterface, Sequelize) {
       type: DataTypes.FLOAT,
       defaultValue: 25
     },
-    acceptsPickup: {
-      type: DataTypes.BOOLEAN,
-      defaultValue: false
-    },
-    pickupInstructions: {
-      type: DataTypes.TEXT,
-      allowNull: true
-    },
     // ***** ADDED: farmerId column for linking farm to user *****
     farmerId: {
       type: DataTypes.UUID,

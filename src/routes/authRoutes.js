@@ -68,7 +68,7 @@ router.post('/register', [
     
     // Return success response
     return res.status(201).json({
-      message: 'User registered successfully. Please check your email for verification.',
+      message: 'User registered successfully. You can now log in.',
       user
     });
   } catch (error) {
@@ -91,7 +91,7 @@ router.post('/register', [
 
 /**
  * @route POST /api/auth/verify
- * @description Verify user email with token
+ * @description User verification endpoint (placeholder) - all accounts are now active by default
  * @access Public
  */
 router.post('/verify', [
@@ -104,32 +104,29 @@ router.post('/verify', [
       return res.status(400).json({ errors: errors.array() });
     }
 
-    // Verify the user
-    const verified = await authService.verifyUser(req.body.token);
+    // Since all accounts are now active by default, this is just a placeholder
+    // that returns a success message for API compatibility
+    return res.status(200).json({ 
+      message: 'Your account is already active. You can log in now.',
+      verified: true
+    });
     
-    if (verified) {
-      return res.status(200).json({ message: 'Email verified successfully. You can now log in.' });
-    } else {
-      return res.status(400).json({ 
-        error: 'Verification failed',
-        message: 'Invalid or expired verification token. Please request a new verification email.'
-      });
-    }
   } catch (error) {
     authLogger.error(`Verification error: ${error.message}`);
     return res.status(500).json({ 
       error: 'Verification failed',
-      message: 'An error occurred during email verification. Please try again later.'
+      message: 'An error occurred during verification. Please try again later.'
     });
   }
 });
 
 /**
  * @route POST /api/auth/login
- * @description Authenticate a user and return JWT tokens
+ * @description Authenticate a user and get JWT token
  * @access Public
  */
 router.post('/login', [
+  // Validation middleware
   body('email').isEmail().withMessage('Please provide a valid email'),
   body('password').notEmpty().withMessage('Password is required')
 ], async (req, res) => {
@@ -139,19 +136,19 @@ router.post('/login', [
     if (!errors.isEmpty()) {
       return res.status(400).json({ errors: errors.array() });
     }
-
-    // Log request details for debugging (only at debug level, not console)
-    authLogger.debug(`Login request: ${req.body.email}`);
+    
+    const { email, password } = req.body;
     
     try {
       // Authenticate user
-      const user = await authService.authenticateUser(req.body.email, req.body.password);
+      const user = await authService.authenticateUser(email, password);
       
       // Generate tokens
-      const tokens = await authService.generateTokens(user);
+      const tokens = await authService.getTokensForUser(user);
       
-      // Return success response with user data and tokens
-      const responseData = {
+      // Return tokens with user data
+      return res.status(200).json({
+        message: 'Login successful',
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
         user: {
@@ -159,45 +156,32 @@ router.post('/login', [
           email: user.email,
           firstName: user.firstName,
           lastName: user.lastName,
-          role: user.role,
-          permissions: user.role === 'consumer' ? ['read', 'create_order'] :
-                      user.role === 'farmer' ? ['read', 'write', 'update', 'delete_own'] :
-                      user.role === 'driver' ? ['read', 'update_delivery'] :
-                      user.role === 'admin' ? ['read', 'write', 'update', 'delete', 'admin'] : ['read']
+          role: user.role
         }
-      };
-      
-      // Set content type explicitly
-      res.setHeader('Content-Type', 'application/json');
-      authLogger.info(`User logged in successfully: ${user.email}`);
-      return res.status(200).json(responseData);
+      });
     } catch (authError) {
-      throw authError; // Pass to outer catch block for consistent error handling
+      // Handle specific authentication errors
+      if (authError.message === 'Invalid credentials') {
+        return res.status(401).json({
+          error: 'Authentication failed',
+          message: 'Invalid email or password'
+        });
+      } else if (authError.message === 'Account is not active') {
+        return res.status(403).json({
+          error: 'Authentication failed',
+          message: 'Your account is not active. Please contact support.'
+        });
+      } else {
+        // Re-throw for general error handling
+        throw authError;
+      }
     }
   } catch (error) {
-    authLogger.warn(`Login failed for ${req.body.email}: ${error.message}`);
+    authLogger.error(`Login error: ${error.message}`);
     
-    // Provide specific error messages for different login failures
-    if (error.message.includes('Invalid email or password')) {
-      return res.status(401).json({ 
-        error: 'Authentication failed',
-        message: 'Invalid email or password. Please try again.'
-      });
-    } else if (error.message.includes('pending verification')) {
-      return res.status(403).json({ 
-        error: 'Account not verified',
-        message: 'Your account is pending verification. Please check your email for verification instructions.'
-      });
-    } else if (error.message.includes('suspended')) {
-      return res.status(403).json({ 
-        error: 'Account suspended',
-        message: 'Your account has been suspended. Please contact support for assistance.'
-      });
-    }
-    
-    return res.status(500).json({ 
-      error: 'Login failed',
-      message: 'An unexpected error occurred during login. Please try again later.'
+    return res.status(500).json({
+      error: 'Authentication failed',
+      message: 'An error occurred during login. Please try again later.'
     });
   }
 });

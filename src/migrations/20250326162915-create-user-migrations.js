@@ -46,14 +46,7 @@ async function up(queryInterface, Sequelize) {
     permissions: {
       type: DataTypes.TEXT,
       allowNull: true,
-      defaultValue: JSON.stringify(['read']),
-      get() {
-        const rawValue = this.getDataValue('permissions');
-        return rawValue ? JSON.parse(rawValue) : ['read'];
-      },
-      set(value) {
-        this.setDataValue('permissions', JSON.stringify(Array.isArray(value) ? value : [value]));
-      }
+      defaultValue: JSON.stringify(['read'])
     },
     status: {
       type: DataTypes.ENUM('active', 'pending', 'suspended', 'deleted'),
@@ -193,4 +186,3 @@ module.exports = {
   up,
   down
 };
-

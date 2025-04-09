@@ -44,7 +44,16 @@ const Farm = sequelize.define('Farm', {
   // ***** Added farmerId field for the association with the User model *****
   farmerId: {
     type: DataTypes.UUID,
-    allowNull: false // adjust allowNull based on your requirements
+    allowNull: true // This is now allowNull true as per our database check
+  },
+  // Add the userId field which is required (NOT NULL)
+  userId: {
+    type: DataTypes.UUID,
+    allowNull: false,
+    references: {
+      model: 'users',
+      key: 'id'
+    }
   },
   // ***********************************************************************
   latitude: {
@@ -55,11 +64,11 @@ const Farm = sequelize.define('Farm', {
     type: DataTypes.FLOAT,
     allowNull: true
   },
-  phoneNumber: {
+  contactPhone: {
     type: DataTypes.STRING,
     allowNull: true
   },
-  email: {
+  contactEmail: {
     type: DataTypes.STRING,
     allowNull: true,
     validate: {
@@ -70,52 +79,28 @@ const Farm = sequelize.define('Farm', {
     type: DataTypes.STRING,
     allowNull: true
   },
-  isVerified: {
-    type: DataTypes.BOOLEAN,
-    defaultValue: false
+  logoUrl: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  bannerUrl: {
+    type: DataTypes.STRING,
+    allowNull: true
   },
   isDefault: {
     type: DataTypes.BOOLEAN,
     defaultValue: false,
     allowNull: false
   },
-  status: {
-    type: DataTypes.ENUM('active', 'pending', 'suspended', 'closed'),
-    defaultValue: 'pending'
-  },
-  imageUrl: {
-    type: DataTypes.STRING,
-    allowNull: true
-  },
-  certifications: {
-    type: DataTypes.TEXT,
-    defaultValue: JSON.stringify([]),
-    get() {
-      const rawValue = this.getDataValue('certifications');
-      return rawValue ? JSON.parse(rawValue) : [];
-    },
-    set(value) {
-      this.setDataValue('certifications', JSON.stringify(Array.isArray(value) ? value : []));
-    }
-  },
-  acceptsDelivery: {
+  isActive: {
     type: DataTypes.BOOLEAN,
-    defaultValue: true
+    defaultValue: true,
+    allowNull: false
   },
-  deliveryRange: {
-    type: DataTypes.FLOAT,
-    defaultValue: 25 // miles
-  },
-  // Field kept for backward compatibility with existing data
-  // but ignored in application logic since FreshFarmily now handles all deliveries
-  acceptsPickup: {
-    type: DataTypes.BOOLEAN,
-    defaultValue: false
-  },
-  // Field kept for backward compatibility but no longer used
-  pickupInstructions: {
-    type: DataTypes.TEXT,
-    allowNull: true
+  operatingHours: {
+    type: DataTypes.JSON,
+    allowNull: true,
+    defaultValue: {}
   },
   createdAt: {
     type: DataTypes.DATE,
@@ -127,6 +112,7 @@ const Farm = sequelize.define('Farm', {
   }
 }, {
   tableName: 'farms',
+  timestamps: true,
   indexes: [
     {
       fields: ['name']
@@ -135,7 +121,7 @@ const Farm = sequelize.define('Farm', {
       fields: ['zipCode']
     },
     {
-      fields: ['isVerified', 'status']
+      fields: ['isDefault', 'isActive']
     }
   ],
   hooks: {
@@ -143,7 +129,7 @@ const Farm = sequelize.define('Farm', {
       logger.info(`Creating new farm: ${farm.name}`);
     },
     afterUpdate: (farm) => {
-      logger.info(`Updated farm: ${farm.name}, status: ${farm.status}`);
+      logger.info(`Updated farm: ${farm.name}, status: ${farm.isActive}`);
     }
   }
 });

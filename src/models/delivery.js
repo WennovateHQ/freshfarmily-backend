@@ -149,6 +149,7 @@ const Delivery = sequelize.define('Delivery', {
     defaultValue: DataTypes.NOW
   }
 }, {
+  tableName: 'deliveries',
   hooks: {
     afterCreate: async (delivery) => {
       logger.info(`New delivery created: ${delivery.id} for order ${delivery.orderId}`);

@@ -23,182 +23,55 @@ const idRouter = express.Router({ mergeParams: true });
 // Mount the ID router for all ID-specific routes
 router.use('/:id', idRouter);
 
-// Test data for testing mode
-const TEST_PRODUCTS = [
-  {
-    id: 'test-product-id-1',
-    name: 'Organic Apples',
-    description: 'Fresh organic apples from local farms',
-    price: 19.99,
-    unit: 'kg',
-    quantityAvailable: 100,
-    isOrganic: true,
-    isAvailable: true,
-    category: 'Fruits',
-    status: 'active',
-    farmId: 'test_farm_id',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    nutritionalInfo: {
-      calories: 95,
-      protein: 0.5,
-      carbs: 25,
-      fiber: 4.5,
-      fat: 0.3,
-      servingSize: '1 medium apple (182g)'
-    },
-    storageInstructions: 'Keep refrigerated for up to 2 weeks',
-    growingPractices: [
-      'No synthetic pesticides',
-      'Natural fertilizers only',
-      'Sustainable water management'
-    ],
-    harvestToDelivery: '24-48 hours',
-    reviews: [
-      {
-        rating: 4.5,
-        comment: 'Very fresh and tasty!',
-        reviewer: { firstName: 'John', lastName: 'D.' },
-        date: new Date().toISOString()
-      }
-    ],
-    images: [
-      '/images/products/apples.jpg',
-      '/images/products/apples2.jpg'
-    ],
-    units: [
-      { type: 'kg', price: 19.99, available: 50 },
-      { type: 'lb', price: 9.99, available: 100 }
-    ],
-    additionalServices: [
-      { id: 1, name: 'Gift Wrapping', price: 5.99, description: 'Eco-friendly gift wrapping' },
-      { id: 2, name: 'Express Delivery', price: 7.99, description: 'Same-day delivery' }
-    ],
-    Farm: {
-      id: 'test_farm_id',
-      name: 'Green Valley Farms',
-      description: 'A family-owned organic farm',
-      city: 'Portland',
-      state: 'OR',
-      isVerified: true,
-      acceptsPickup: true,
-      acceptsDelivery: true
-    }
-  },
-  {
-    id: 'test-product-id-2',
-    name: 'Fresh Carrots',
-    description: 'Farm-fresh organic carrots',
-    price: 12.99,
-    unit: 'bunch',
-    quantityAvailable: 75,
-    isOrganic: true,
-    isAvailable: true,
-    category: 'Vegetables',
-    status: 'active',
-    farmId: 'test_farm_id_2',
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    nutritionalInfo: {
-      calories: 50,
-      protein: 1.1,
-      carbs: 12,
-      fiber: 3.6,
-      fat: 0.2,
-      servingSize: '1 medium carrot (61g)'
-    },
-    storageInstructions: 'Store in refrigerator for up to 2 weeks',
-    growingPractices: [
-      'No synthetic pesticides',
-      'Companion planting',
-      'Crop rotation'
-    ],
-    harvestToDelivery: '24 hours',
-    reviews: [
-      {
-        rating: 5,
-        comment: 'So crunchy and sweet!',
-        reviewer: { firstName: 'Sarah', lastName: 'M.' },
-        date: new Date().toISOString()
-      }
-    ],
-    images: [
-      '/images/products/carrots.jpg',
-      '/images/products/carrots2.jpg'
-    ],
-    units: [
-      { type: 'bunch', price: 12.99, available: 30 },
-      { type: 'lb', price: 8.99, available: 50 }
-    ],
-    additionalServices: [
-      { id: 1, name: 'Custom Cut', price: 2.99, description: 'Cut to your specifications' },
-      { id: 2, name: 'Express Delivery', price: 7.99, description: 'Same-day delivery' }
-    ],
-    Farm: {
-      id: 'test_farm_id_2',
-      name: 'Sunshine Acres',
-      description: 'Specializing in root vegetables',
-      city: 'Eugene',
-      state: 'OR',
-      isVerified: true,
-      acceptsPickup: true,
-      acceptsDelivery: true
-    }
-  }
-];
-
 // Find product by ID middleware - used across multiple routes
 async function findProductById(req, res, next) {
   try {
-    const { id } = req.params;
+    // Log info
+    logger.debug(`Finding product by ID: ${req.params.id}`);
     
-    // Find product
-    const product = await Product.findByPk(id, {
-      include: [
-        {
-          model: Farm,
-          attributes: ['id', 'name', 'address', 'city', 'state', 'farmerId'],
-        },
-        {
-          model: ProductPhoto,
-          as: 'ProductPhotos',
-          limit: 5,
-          order: [['isMain', 'DESC'], ['order', 'ASC']]
-        }
+    // Find the product with explicit attributes
+    const product = await Product.findByPk(req.params.id, {
+      attributes: [
+        'id', 'name', 'description', 'price', 'unit', 
+        'quantityAvailable', 'isOrganic', 'isAvailable', 'category',
+        'createdAt', 'updatedAt', 'farmId'
       ]
     });
     
-    // If product exists, attach to request
-    if (product) {
-      // Map state to province for frontend compatibility
-      if (product.Farm && product.Farm.state) {
-        product.Farm.dataValues.province = product.Farm.state;
-      }
-      
-      req.product = product;
-      return next();
-    }
-    
-    // For GET requests, return 200 with empty data instead of 404
-    if (req.method === 'GET') {
-      return res.status(200).json({
-        success: true,
-        message: 'Product not found',
-        product: null
+    // If no product is found, return 404
+    if (!product) {
+      return res.status(404).json({
+        error: 'Not Found',
+        message: 'Product not found'
       });
     }
     
-    // For other methods (PUT, DELETE), return 404
-    return res.status(404).json({
-      success: false,
-      message: 'Product not found',
+    // Get the farm for the product with explicit attributes
+    const farm = await Farm.findByPk(product.farmId, {
+      attributes: ['id', 'name', 'description', 'city', 'state', 'isActive', 'address', 'zipCode']
     });
+    
+    // If no farm found, return 404
+    if (!farm) {
+      return res.status(404).json({
+        error: 'Not Found',
+        message: 'Farm not found for product'
+      });
+    }
+    
+    // Add product and farm to request
+    req.product = product;
+    req.farm = farm;
+    
+    // Continue to the next middleware
+    next();
   } catch (error) {
-    logger.error(`Error finding product by ID: ${error.message}`);
+    logger.error(`Error finding product: ${error.message}`);
     return res.status(500).json({
-      success: false,
-      message: 'Server error finding product',
-      error: error.message
+      error: 'Internal Server Error',
+      message: 'Error processing product request',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      service: 'freshfarmily-api'
     });
   }
 }
@@ -325,7 +198,7 @@ router.get('/categories', async (req, res) => {
     const categories = await Product.findAll({
       attributes: [[sequelize.fn('DISTINCT', sequelize.col('category')), 'category']],
       where: {
-        status: 'active'
+        isAvailable: true
       },
       raw: true
     });
@@ -371,40 +244,26 @@ router.get('/', [
     const limit = parseInt(req.query.limit) || 20;
     const offset = (page - 1) * limit;
 
-    // Check if testing mode is enabled
-    const isTestingMode = process.env.TESTING === 'true' || process.env.NODE_ENV === 'test';
-
-    // Log the testing mode status for debugging
-    logger.debug(`TESTING env: ${process.env.TESTING}, NODE_ENV: ${process.env.NODE_ENV}`);
-    logger.info('Returning test product data due to database connectivity issues');
-
-    // Return test products as a temporary solution
-    return res.status(200).json({
-      products: TEST_PRODUCTS,
-      totalCount: TEST_PRODUCTS.length,
-      totalPages: 1,
-      currentPage: page
-    });
-
-    // The code below will not execute until database issues are resolved
-    /*
     // Build database query options
     const queryOptions = {
+      attributes: [
+        'id', 'name', 'description', 'price', 'unit', 
+        'quantityAvailable', 'isOrganic', 'isAvailable', 'category'
+      ],
       where: {
-        isAvailable: true,
-        status: 'active'
+        isAvailable: true
       },
       include: [
         {
           model: Farm,
-          attributes: ['id', 'name', 'city', 'state', 'isVerified'],
+          attributes: ['id', 'name', 'city', 'state', 'isActive'],
           where: {
-            status: 'active'
+            isActive: true
           }
         },
         {
           model: ProductPhoto,
-          as: 'Photos',
+          as: 'ProductPhotos',
           limit: 1,
           where: {
             isMain: true
@@ -459,26 +318,52 @@ router.get('/', [
     queryOptions.order = sortOptions[req.query.sortBy] || sortOptions.newest;
 
     // Execute query
-    const { count, rows: products } = await Product.findAndCountAll(queryOptions);
+    const { count, rows } = await Product.findAndCountAll(queryOptions);
 
+    // Format products for response
+    const products = rows.map(product => ({
+      id: product.id,
+      name: product.name,
+      description: product.description,
+      price: Number(product.price), // Ensure price is a number for toFixed() method
+      unit: product.unit,
+      quantityAvailable: Number(product.quantityAvailable), // Ensure quantity is a number
+      isOrganic: Boolean(product.isOrganic),
+      isAvailable: Boolean(product.isAvailable),
+      category: product.category,
+      // Add default values for fields that might not exist in DB
+      nutritionalInfo: {},
+      storageInstructions: '',
+      growingPractices: [],
+      harvestDate: null,
+      farm: {
+        id: product.Farm.id,
+        name: product.Farm.name,
+        city: product.Farm.city,
+        state: product.Farm.state,
+        isVerified: Boolean(product.Farm.isActive), // Map isActive to isVerified for frontend compatibility
+        acceptsPickup: true,
+        acceptsDelivery: true
+      },
+      image: product.ProductPhotos && product.ProductPhotos.length > 0 ? 
+             product.ProductPhotos[0].url : '/images/no-image.png'
+    }));
+
+    // Return response
     return res.status(200).json({
       products,
-      totalCount: count,
-      totalPages: Math.ceil(count / limit),
-      currentPage: page
+      total: count,
+      page: page,
+      pageSize: limit,
+      totalPages: Math.ceil(count / limit)
     });
-    */
   } catch (error) {
     logger.error(`Error fetching products: ${error.message}`);
     logger.error(`Error stack: ${error.stack}`);
 
-    // Return test products as a fallback on database errors
-    return res.status(200).json({
-      products: TEST_PRODUCTS,
-      totalCount: TEST_PRODUCTS.length,
-      totalPages: 1,
-      currentPage: 1,
-      notice: "Using test data due to database issues. This is a temporary solution."
+    return res.status(500).json({
+      error: 'Internal Server Error',
+      message: 'Failed to fetch products'
     });
   }
 });
@@ -492,43 +377,40 @@ idRouter.get('/', [
   param('id').optional().isString().withMessage('Invalid product ID')
 ], findProductById, async (req, res) => {
   try {
-    // Log info for debugging
-    logger.info(`Returning test product data for id: ${req.params.id}`);
+    // Product ID must be provided
+    if (!req.params.id) {
+      return res.status(400).json({
+        error: 'Bad Request',
+        message: 'Product ID is required'
+      });
+    }
     
-    // Find the test product that matches the ID or default to the first one
-    const testProduct = TEST_PRODUCTS.find(p => p.id === req.params.id) || TEST_PRODUCTS[0];
-    return res.status(200).json(testProduct);
-
-    // Database code commented out until connection issues are resolved
-    /*
-    // Get product with details
+    // Find the product with all related data
     const product = await Product.findByPk(req.params.id, {
+      attributes: [
+        'id', 'name', 'description', 'price', 'unit', 
+        'quantityAvailable', 'isOrganic', 'isAvailable', 'category',
+        'createdAt', 'updatedAt', 'farmId'
+      ],
       include: [
         {
           model: Farm,
-          attributes: ['id', 'name', 'description', 'city', 'state', 'isVerified', 'acceptsPickup', 'acceptsDelivery']
+          attributes: ['id', 'name', 'description', 'city', 'state', 'isActive']
         },
         {
           model: ProductPhoto,
-          as: 'Photos',
-          order: [['isMain', 'DESC'], ['order', 'ASC']]
+          as: 'ProductPhotos',
+          attributes: ['id', 'url', 'isMain']
         },
         {
           model: ProductReview,
           as: 'Reviews',
-          where: { status: 'approved' },
-          required: false,
-          include: [
-            {
-              model: User,
-              as: 'Reviewer',
-              attributes: ['firstName', 'lastName']
-            }
-          ]
+          attributes: ['id', 'rating', 'comment', 'createdAt', 'userId']
         }
       ]
     });
-
+    
+    // If product not found, return 404
     if (!product) {
       return res.status(404).json({
         error: 'Not Found',
@@ -536,14 +418,64 @@ idRouter.get('/', [
       });
     }
 
-    return res.status(200).json({ product });
-    */
+    // Format the response in the structure expected by the frontend
+    const formattedProduct = {
+      id: product.id,
+      name: product.name,
+      description: product.description,
+      price: Number(product.price || 0), // Ensure price is a number for toFixed() method
+      unit: product.unit,
+      quantityAvailable: Number(product.quantityAvailable || 0), // Ensure quantity is a number
+      isOrganic: Boolean(product.isOrganic),
+      isAvailable: Boolean(product.isAvailable),
+      category: product.category,
+      nutritionalInfo: {}, // Default empty object since field doesn't exist in DB
+      storageInstructions: '', // Default empty string since field doesn't exist in DB
+      growingPractices: [], // Default empty array since field doesn't exist in DB
+      harvestDate: null, // Default null since field might not exist in DB
+      images: product.ProductPhotos ? product.ProductPhotos.map(photo => ({
+        id: photo.id,
+        url: photo.url,
+        isPrimary: photo.isPrimary || photo.isMain
+      })) : [],
+      farm: {
+        id: product.Farm.id,
+        name: product.Farm.name,
+        description: product.Farm.description || '',
+        city: product.Farm.city,
+        state: product.Farm.state,
+        isVerified: Boolean(product.Farm.isActive), // Map isActive to isVerified for frontend compatibility
+        acceptsPickup: true, // Default values since these fields don't exist in the model
+        acceptsDelivery: true // Default values since these fields don't exist in the model
+      },
+      reviews: product.Reviews ? product.Reviews.map(review => ({
+        id: review.id,
+        rating: review.rating,
+        comment: review.comment,
+        createdAt: review.createdAt,
+        userId: review.userId,
+        user: {
+          id: review.userId,
+          name: 'User' // Fallback name since we don't have user details
+        }
+      })) : [],
+      createdAt: product.createdAt,
+      updatedAt: product.updatedAt,
+      // Add these fields to match frontend expectations
+      units: [
+        { type: product.unit, price: Number(product.price || 0), available: Number(product.quantityAvailable || 0) }
+      ],
+      additionalServices: []
+    };
+
+    return res.status(200).json(formattedProduct);
   } catch (error) {
-    logger.error(`Error fetching product: ${error.message}`);
-    
-    // Return a test product as fallback
-    const testProduct = TEST_PRODUCTS.find(p => p.id === req.params.id) || TEST_PRODUCTS[0];
-    return res.status(200).json(testProduct);
+    logger.error('Error fetching product by ID:', error);
+    return res.status(500).json({
+      error: 'Internal Server Error',
+      message: 'An error occurred while fetching the product details',
+      service: 'freshfarmily-api'
+    });
   }
 });
 
@@ -616,8 +548,8 @@ router.post('/', [
     }
 
     // Check farm status
-    if (farm.status !== 'active' && req.user.role !== 'admin') {
-      console.error(`Farm status is ${farm.status} and user role is ${req.user.role}. Cannot add products to an inactive farm.`);
+    if (farm.isActive !== true && farm.farmerId !== req.user.userId && req.user.role !== 'admin') {
+      logger.error(`Farm status is ${farm.isActive} and user role is ${req.user.role}. Cannot add products to an inactive farm.`);
       return res.status(403).json({
         error: 'Forbidden',
         message: 'Cannot add products to an inactive farm'
@@ -852,37 +784,56 @@ router.get('/farm/:farmId', async (req, res) => {
 
     // Find products for this farm
     const products = await Product.findAll({
+      attributes: [
+        'id', 'name', 'description', 'price', 'unit', 
+        'quantityAvailable', 'isOrganic', 'isAvailable', 'category'
+      ],
       where: {
         farmId: farmId
       },
       include: [
         { 
           model: Farm,
-          attributes: ['id', 'name', 'address', 'city', 'state', 'zipCode'] 
+          attributes: ['id', 'name', 'address', 'city', 'state', 'zipCode', 'isActive'] 
         },
         { 
           model: ProductPhoto, 
-          as: 'ProductPhotos', 
-          attributes: ['id', 'url', 'isMain'] 
+          as: 'ProductPhotos',
+          required: false
         }
       ]
     });
 
-    // Handle state field to add province for frontend compatibility
-    const formattedProducts = products.map(product => {
-      const productData = product.toJSON();
-      if (productData.Farm && productData.Farm.state) {
-        productData.Farm.province = productData.Farm.state;
-      }
-      return productData;
-    });
+    // Format products for response
+    const formattedProducts = products.map(product => ({
+      id: product.id,
+      name: product.name,
+      description: product.description || '',
+      price: Number(product.price), // Ensure price is a number for toFixed() method
+      unit: product.unit,
+      quantityAvailable: Number(product.quantityAvailable), // Ensure quantity is a number
+      isOrganic: Boolean(product.isOrganic),
+      isAvailable: Boolean(product.isAvailable),
+      category: product.category,
+      farm: {
+        id: product.Farm.id,
+        name: product.Farm.name,
+        address: product.Farm.address,
+        city: product.Farm.city,
+        state: product.Farm.state,
+        province: product.Farm.state, // For frontend compatibility
+        zipCode: product.Farm.zipCode,
+        isVerified: Boolean(product.Farm.isActive) // Map isActive to isVerified for frontend
+      },
+      image: product.ProductPhotos && product.ProductPhotos.length > 0 ? 
+             product.ProductPhotos[0].url : '/images/no-image.png'
+    }));
 
-    logger.info(`Retrieved ${products.length} products for farm ${farmId}`);
-    
-    // Return products (could be empty array)
+    // Return response
     return res.status(200).json({
-      success: true,
-      products: formattedProducts
+      farmId: farmId,
+      products: formattedProducts,
+      total: formattedProducts.length
     });
   } catch (error) {
     logger.error(`Error retrieving products for farm: ${error.message}`);

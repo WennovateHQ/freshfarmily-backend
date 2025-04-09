@@ -9,7 +9,6 @@ const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
 const swaggerUi = require('swagger-ui-express');
 const swaggerSpec = require('./config/swagger');
 const logger = require('./utils/logger');
@@ -32,6 +31,8 @@ const wishlistRoutes = require('./routes/wishlistRoutes');
 const uploadRoutes = require('./routes/uploadRoutes');
 const farmerRoutes = require('./routes/farmerRoutes');
 const settingsRoutes = require('./routes/settingsRoutes'); // Import settings routes
+const cartRoutes = require('./routes/cartRoutes'); // Import cart routes
+const { limiter, authLimiter } = require('./middleware/rateLimiter'); // Import rate limiters
 
 // Initialize Express app
 const app = express();
@@ -49,34 +50,36 @@ app.use(helmet({
 
 // Configure CORS - more restricted in production
 const corsOptions = {
-  origin: NODE_ENV === 'production'
-    ? (process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',').map(o => o.trim()) : [process.env.FRONTEND_URL]) // In production, use configured origins
-    : (process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',').map(o => o.trim()) : ['http://localhost:3000', 'http://localhost:3001']), // In development, prefer env var if set
+  origin: function(origin, callback) {
+    // Allow requests with no origin (like mobile apps, curl requests)
+    if(!origin) return callback(null, true);
+    
+    const allowedOrigins = NODE_ENV === 'production'
+      ? (process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',').map(o => o.trim()) : [process.env.FRONTEND_URL])
+      : ['http://localhost:3000', 'http://localhost:3001', 'http://127.0.0.1:3000', 'http://127.0.0.1:3001', 'http://localhost:8080', 'http://127.0.0.1:8080']; // Allow common local development URLs
+      
+    // Check if the origin is allowed
+    if(allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    } else {
+      // Log detailed information about rejected CORS requests
+      logger.warn(`CORS rejected: Origin ${origin} not allowed`);
+      return callback(null, false);
+    }
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Cache-Control', 'X-Allow-Duplicate'],
   credentials: true, // Enable credentials for auth requests
-  optionsSuccessStatus: 200
+  optionsSuccessStatus: 200,
+  maxAge: 86400 // 24 hours - Cache preflight requests
 };
 app.use(cors(corsOptions));
 
-// Rate limiting - more aggressive in production
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: NODE_ENV === 'production' ? 100 : 1000, // Limit each IP to 100 requests per window in production
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many requests, please try again later.' },
-  // No test mode bypass in production
-  skip: (req) => {
-    if (NODE_ENV !== 'production' && req.get('x-testing-mode') === 'true') {
-      return true; // Skip rate limiting for tests in development
-    }
-    return false;
-  }
-});
+// Log middleware initialization
+logger.info(`CORS configured in ${NODE_ENV} mode`);
 
-// Apply rate limiting to all routes
-app.use(apiLimiter);
+// Rate limiting - more aggressive in production
+app.use(limiter);
 
 // Body parser middleware
 app.use(express.json());
@@ -117,7 +120,7 @@ apiRouter.get('/health', (req, res) => {
 apiRouter.use('/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, { explorer: true }));
 
 // Mount API routes
-apiRouter.use('/auth', authRoutes);
+apiRouter.use('/auth', authLimiter, authRoutes);
 apiRouter.use('/users', userRoutes);
 apiRouter.use('/farms', farmRoutes);
 apiRouter.use('/products', productRoutes);
@@ -132,6 +135,7 @@ apiRouter.use('/wishlist', wishlistRoutes);
 apiRouter.use('/upload', uploadRoutes); // Mount upload routes
 apiRouter.use('/farmers', farmerRoutes); // Mount farmer routes
 apiRouter.use('/settings', settingsRoutes); // Mount settings routes
+apiRouter.use('/cart', cartRoutes); // Mount cart routes
 
 // Mount all API routes under /api
 app.use('/api', apiRouter);

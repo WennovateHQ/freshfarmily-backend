@@ -5,7 +5,7 @@
  */
 
 const { DataTypes } = require('sequelize');
-const { sequelize, SQLiteTypes } = require('../config/database');
+const { sequelize } = require('../config/database');
 const bcrypt = require('bcrypt');
 
 // Define role-based permissions system
@@ -64,89 +64,54 @@ const User = sequelize.define('User', {
     defaultValue: 'pending',
     allowNull: false
   },
-  emailVerified: {
-    type: DataTypes.BOOLEAN,
-    defaultValue: false
-  },
-  verificationToken: {
-    type: DataTypes.STRING,
-    allowNull: true
-  },
-  passwordResetToken: {
-    type: DataTypes.STRING,
-    allowNull: true
-  },
-  passwordResetExpires: {
-    type: DataTypes.DATE,
-    allowNull: true
-  },
-  lastLogin: {
-    type: DataTypes.DATE,
-    allowNull: true
-  },
-  refreshToken: {
-    type: DataTypes.TEXT,
-    allowNull: true
-  },
-  // Added isActive stripeCustomerId, stripeAccountId 
-  // createdAt and updatedAt fields for the User Schema
-  isActive: {
-    type: DataTypes.BOOLEAN,
-    defaultValue: true
-  },
-  stripeCustomerId: {
-    type: DataTypes.STRING,
-    allowNull: true
-  },
-  stripeAccountId: {
-    type: DataTypes.STRING,
-    allowNull: true
-  },
+  // Add timestamps - these match Sequelize defaults
   createdAt: {
     type: DataTypes.DATE,
-    defaultValue: DataTypes.NOW
+    allowNull: false
   },
   updatedAt: {
     type: DataTypes.DATE,
-    defaultValue: DataTypes.NOW
+    allowNull: false
   }
 }, {
-  // Add hooks (lifecycle callbacks)
+  tableName: 'users',
   hooks: {
+    // Hash the password before creating a new user
     beforeCreate: async (user) => {
       if (user.password) {
-        user.password = await bcrypt.hash(user.password, 10);
+        const salt = await bcrypt.genSalt(10);
+        user.password = await bcrypt.hash(user.password, salt);
       }
     },
+    // Hash the password before updating if it's changed
     beforeUpdate: async (user) => {
       if (user.changed('password')) {
-        user.password = await bcrypt.hash(user.password, 10);
+        const salt = await bcrypt.genSalt(10);
+        user.password = await bcrypt.hash(user.password, salt);
       }
-    }
-  },
-  // Define instance methods
-  instanceMethods: {
-    // Method to validate password
-    validatePassword(password) {
-      return bcrypt.compare(password, this.password);
     }
   }
 });
 
 // Add instance method to compare passwords
-User.prototype.validatePassword = function(password) {
-  return bcrypt.compare(password, this.password);
+User.prototype.validatePassword = async function(password) {
+  try {
+    return await bcrypt.compare(password, this.password);
+  } catch (error) {
+    console.error('Error validating password:', error);
+    return false;
+  }
 };
 
 // Static method to get user with full profile
-User.findByIdWithProfile = async function(id) {
-  const user = await this.findByPk(id, {
-    include: ['Profile']
+User.getUserWithProfile = async function(userId) {
+  return await User.findByPk(userId, {
+    attributes: { exclude: ['password'] },
+    include: 'Profile'
   });
-  return user;
 };
 
-// Define related models
+// Define Profile model
 const Profile = sequelize.define('Profile', {
   id: {
     type: DataTypes.UUID,
@@ -177,29 +142,25 @@ const Profile = sequelize.define('Profile', {
     type: DataTypes.TEXT,
     allowNull: true
   },
-  profileImage: {
+  avatarUrl: {
     type: DataTypes.STRING,
     allowNull: true
   },
-  // Added createdAt and updatedAt fields for the User Schema
+  preferences: {
+    type: DataTypes.JSONB,
+    allowNull: true
+  },
   createdAt: {
     type: DataTypes.DATE,
-    defaultValue: DataTypes.NOW
+    allowNull: false
   },
   updatedAt: {
     type: DataTypes.DATE,
-    defaultValue: DataTypes.NOW
+    allowNull: false
   }
+}, {
+  tableName: 'profiles'
 });
 
-// Define relationships
-User.hasOne(Profile, {
-  foreignKey: 'userId',
-  as: 'Profile',
-  onDelete: 'CASCADE'
-});
-Profile.belongsTo(User, {
-  foreignKey: 'userId'
-});
-
+// Export models - removing the associations from here as they are now defined in index.js
 module.exports = { User, Profile, ROLE_PERMISSIONS };

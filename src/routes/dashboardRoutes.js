@@ -124,11 +124,11 @@ router.get('/admin', authenticate, async (req, res) => {
     // Get user growth data
     const userGrowth = await sequelize.query(`
       SELECT 
-        DATE_TRUNC('month', "createdAt") as month,
-        COUNT("Users".id) as new_users
-      FROM "Users"
-      WHERE "createdAt" >= :startDate AND "createdAt" <= :endDate
-      GROUP BY DATE_TRUNC('month', "createdAt")
+        DATE_TRUNC('month', "users"."createdAt") as month,
+        COUNT("users".id) as new_users
+      FROM "users"
+      WHERE "users"."createdAt" >= :startDate AND "users"."createdAt" <= :endDate
+      GROUP BY DATE_TRUNC('month', "users"."createdAt")
       ORDER BY month ASC
     `, {
       replacements: { startDate, endDate },
@@ -145,22 +145,22 @@ router.get('/admin', authenticate, async (req, res) => {
 
     // Get recent system activity
     const recentActivity = await sequelize.query(`
-      (SELECT 'user_registered' as activity_type, "Users"."createdAt" as timestamp, "Users".id as reference_id
-       FROM "Users" 
-       WHERE "Users"."createdAt" >= :startDate 
-       ORDER BY "Users"."createdAt" DESC 
+      (SELECT 'user_registered' as activity_type, "users"."createdAt" as timestamp, "users".id as reference_id
+       FROM "users" 
+       WHERE "users"."createdAt" >= :startDate 
+       ORDER BY "users"."createdAt" DESC 
        LIMIT 5)
       UNION ALL
-      (SELECT 'order_placed' as activity_type, "Orders"."createdAt" as timestamp, "Orders".id as reference_id
-       FROM "Orders" 
-       WHERE "Orders"."createdAt" >= :startDate 
-       ORDER BY "Orders"."createdAt" DESC 
+      (SELECT 'order_placed' as activity_type, "orders"."createdAt" as timestamp, "orders".id as reference_id
+       FROM "orders" 
+       WHERE "orders"."createdAt" >= :startDate 
+       ORDER BY "orders"."createdAt" DESC 
        LIMIT 5)
       UNION ALL
-      (SELECT 'farm_registered' as activity_type, "Farms"."createdAt" as timestamp, "Farms".id as reference_id
-       FROM "Farms" 
-       WHERE "Farms"."createdAt" >= :startDate 
-       ORDER BY "Farms"."createdAt" DESC 
+      (SELECT 'farm_registered' as activity_type, "farms"."createdAt" as timestamp, "farms".id as reference_id
+       FROM "farms" 
+       WHERE "farms"."createdAt" >= :startDate 
+       ORDER BY "farms"."createdAt" DESC 
        LIMIT 5)
       ORDER BY timestamp DESC
       LIMIT 10
@@ -404,6 +404,245 @@ router.get('/farmer/:userId', authenticate, async (req, res) => {
       success: false,
       error: 'Failed to retrieve dashboard data',
       message: error.message
+    });
+  }
+});
+
+/**
+ * @swagger
+ * /api/dashboard/farm/{farmId}:
+ *   get:
+ *     summary: Get detailed analytics for a specific farm
+ *     description: Retrieves detailed analytics for a specific farm, including revenue and order data
+ *     tags: [Dashboard]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: farmId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: ID of the farm
+ *       - in: query
+ *         name: period
+ *         schema:
+ *           type: string
+ *           enum: [week, month, year]
+ *         default: month
+ *         description: Time period for analytics
+ *     responses:
+ *       200:
+ *         description: Farm analytics retrieved successfully
+ *       401:
+ *         description: Not authorized
+ *       403:
+ *         description: Forbidden - insufficient permissions
+ *       500:
+ *         description: Server error
+ */
+router.get('/farm/:farmId', [
+  authenticate, 
+  requireActiveUser,
+  query('period').optional().isIn(['week', 'month', 'year']).withMessage('Invalid period')
+], async (req, res) => {
+  try {
+    // Validate input
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const { farmId } = req.params;
+    const period = req.query.period || 'month';
+    
+    // Verify farm exists and user has permission
+    const farm = await Farm.findByPk(farmId);
+    if (!farm) {
+      return res.status(404).json({
+        error: 'Not Found',
+        message: 'Farm not found'
+      });
+    }
+    
+    // Check if user is authorized (farm owner or admin)
+    if (farm.farmerId !== req.user.userId && req.user.role !== 'admin') {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'You do not have permission to view analytics for this farm'
+      });
+    }
+    
+    // Calculate date ranges
+    const endDate = new Date();
+    let startDate;
+    
+    switch (period) {
+      case 'week':
+        startDate = new Date(endDate);
+        startDate.setDate(startDate.getDate() - 7);
+        break;
+      case 'year':
+        startDate = new Date(endDate);
+        startDate.setFullYear(startDate.getFullYear() - 1);
+        break;
+      case 'month':
+      default:
+        startDate = new Date(endDate);
+        startDate.setMonth(startDate.getMonth() - 1);
+        break;
+    }
+    
+    // Get farm order and revenue stats
+    const { totalOrders, totalRevenue, ordersByStatus } = await analyticsService.getFarmOrderStats(farmId, startDate, endDate);
+    
+    // Get daily revenue data
+    const dailyRevenue = await sequelize.query(`
+      SELECT 
+        DATE_TRUNC('day', o."createdAt")::date as date,
+        SUM(oi.quantity * oi."unitPrice") as amount
+      FROM "order_items" oi
+      JOIN "orders" o ON oi."orderId" = o.id
+      JOIN "products" p ON oi."productId" = p.id
+      WHERE p."farmId" = :farmId
+        AND o."createdAt" >= :startDate
+        AND o."createdAt" <= :endDate
+        AND o.status NOT IN ('cancelled')
+      GROUP BY DATE_TRUNC('day', o."createdAt")::date
+      ORDER BY date ASC
+    `, {
+      replacements: { farmId, startDate, endDate },
+      type: sequelize.QueryTypes.SELECT
+    });
+    
+    // Get weekly revenue data
+    const weeklyRevenue = await sequelize.query(`
+      SELECT 
+        DATE_TRUNC('week', o."createdAt")::date as week,
+        SUM(oi.quantity * oi."unitPrice") as amount
+      FROM "order_items" oi
+      JOIN "orders" o ON oi."orderId" = o.id
+      JOIN "products" p ON oi."productId" = p.id
+      WHERE p."farmId" = :farmId
+        AND o."createdAt" >= :startDate
+        AND o."createdAt" <= :endDate
+        AND o.status NOT IN ('cancelled')
+      GROUP BY DATE_TRUNC('week', o."createdAt")::date
+      ORDER BY week ASC
+    `, {
+      replacements: { farmId, startDate, endDate },
+      type: sequelize.QueryTypes.SELECT
+    });
+    
+    // Get monthly revenue data
+    const monthlyRevenue = await sequelize.query(`
+      SELECT 
+        DATE_TRUNC('month', o."createdAt")::date as month,
+        SUM(oi.quantity * oi."unitPrice") as amount
+      FROM "order_items" oi
+      JOIN "orders" o ON oi."orderId" = o.id
+      JOIN "products" p ON oi."productId" = p.id
+      WHERE p."farmId" = :farmId
+        AND o."createdAt" >= :yearAgo
+        AND o."createdAt" <= :endDate
+        AND o.status NOT IN ('cancelled')
+      GROUP BY DATE_TRUNC('month', o."createdAt")::date
+      ORDER BY month ASC
+    `, {
+      replacements: { 
+        farmId, 
+        yearAgo: new Date(new Date().setFullYear(new Date().getFullYear() - 1)),
+        endDate 
+      },
+      type: sequelize.QueryTypes.SELECT
+    });
+    
+    // Get unique customer count
+    const customerCount = await sequelize.query(`
+      SELECT COUNT(DISTINCT u.id) as customer_count
+      FROM users u
+      JOIN orders o ON u.id = o."userId"
+      JOIN order_items oi ON o.id = oi."orderId"
+      JOIN products p ON oi."productId" = p.id
+      WHERE p."farmId" = :farmId
+        AND o."createdAt" >= :startDate
+        AND o."createdAt" <= :endDate
+    `, {
+      replacements: { farmId, startDate, endDate },
+      type: sequelize.QueryTypes.SELECT
+    });
+    
+    // Get top selling products
+    const topProducts = await sequelize.query(`
+      SELECT 
+        p.id as "productId",
+        p.name,
+        SUM(oi.quantity) as "totalQuantity",
+        SUM(oi.quantity * oi."unitPrice") as "totalRevenue"
+      FROM "order_items" oi
+      JOIN "orders" o ON oi."orderId" = o.id
+      JOIN "products" p ON oi."productId" = p.id
+      WHERE p."farmId" = :farmId
+        AND o."createdAt" >= :startDate
+        AND o."createdAt" <= :endDate
+        AND o.status NOT IN ('cancelled')
+      GROUP BY p.id, p.name
+      ORDER BY "totalQuantity" DESC
+      LIMIT 5
+    `, {
+      replacements: { farmId, startDate, endDate },
+      type: sequelize.QueryTypes.SELECT
+    });
+    
+    // Format the response
+    const analyticsData = {
+      revenue: {
+        total: parseFloat(totalRevenue) || 0,
+        daily: dailyRevenue.map(day => ({
+          date: day.date,
+          amount: parseFloat(day.amount) || 0
+        })),
+        weekly: weeklyRevenue.map(week => ({
+          week: week.week,
+          amount: parseFloat(week.amount) || 0
+        })),
+        monthly: monthlyRevenue.map(month => ({
+          month: month.month,
+          amount: parseFloat(month.amount) || 0
+        }))
+      },
+      totalOrders: parseInt(ordersByStatus.total) || 0,
+      ordersByStatus: {
+        pending: parseInt(ordersByStatus.pending) || 0,
+        confirmed: parseInt(ordersByStatus.confirmed) || 0,
+        processing: parseInt(ordersByStatus.processing) || 0,
+        ready: parseInt(ordersByStatus.ready) || 0,
+        out_for_delivery: parseInt(ordersByStatus.out_for_delivery) || 0,
+        delivered: parseInt(ordersByStatus.delivered) || 0,
+        picked_up: parseInt(ordersByStatus.picked_up) || 0,
+        cancelled: parseInt(ordersByStatus.cancelled) || 0
+      },
+      customers: parseInt(customerCount[0].customer_count) || 0,
+      topProducts: topProducts.map(product => ({
+        productId: product.productId,
+        name: product.name,
+        totalQuantity: parseInt(product.totalQuantity) || 0,
+        totalRevenue: parseFloat(product.totalRevenue) || 0
+      }))
+    };
+    
+    return res.status(200).json({
+      success: true,
+      data: analyticsData,
+      period
+    });
+    
+  } catch (error) {
+    logger.error(`Error getting farm analytics: ${error.message}`);
+    return res.status(500).json({
+      success: false,
+      error: 'Internal Server Error',
+      message: `Failed to retrieve farm analytics: ${error.message}`
     });
   }
 });
